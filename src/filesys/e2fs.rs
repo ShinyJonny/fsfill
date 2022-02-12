@@ -6,7 +6,7 @@ use bincode::{Options, DefaultOptions};
 use crate::{Context, Config};
 use crate::serial::Array;
 
-/// The Ext4 Superblock structure.
+/// The Ext2/3/4 Superblock structure.
 /// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 struct SuperBlock {
@@ -55,9 +55,10 @@ struct SuperBlock {
     s_feature_incompat: u32,        /* incompatible feature set */
     s_feature_ro_compat: u32,       /* readonly-compatible feature set */
     s_uuid: [u8; 16],               /* 128-bit uuid for volume */
-    s_volume_name: [u8; 16],      /* volume name */ //char
-    // s_last_mounted: 64 units of u8 (char in C).
-    s_last_mounted: Array<u8, 64>,     /* directory where last mounted */ //__nonstring //char
+    /// Type char[16].
+    s_volume_name: [u8; 16],        /* volume name */
+    /// Type __nonstring char[64].
+    s_last_mounted: Array<u8, 64>,  /* directory where last mounted */
     s_algorithm_usage_bitmap: u32,  /* For compression */
     /*
      * Performance hints.  Directory preallocation should only
@@ -65,7 +66,9 @@ struct SuperBlock {
      */
     s_prealloc_blocks: u8,          /* Nr of blocks to try to preallocate*/
     s_prealloc_dir_blocks: u8,      /* Nr to preallocate for dirs */
+    /// Named `s_padding1` in Ext2.
     s_reserved_gdt_blocks: u16,     /* Per group desc for online growth */
+    // --- End of Ext2 superblock ---
     /*
      * Journaling support valid if EXT4_FEATURE_COMPAT_HAS_JOURNAL set.
      */
@@ -75,10 +78,13 @@ struct SuperBlock {
     s_last_orphan: u32,             /* start of list of inodes to delete */
     s_hash_seed: [u32; 4],          /* HTREE hash seed */
     s_def_hash_version: u8,         /* Default hash version to use */
+    /// Named `s_reserved_char_pad` in Ext3.
     s_jnl_backup_type: u8,
+    /// Named `s_reserved_word_pad` in Ext3.
     s_desc_size: u16 ,              /* size of group descriptor */
     s_default_mount_opts: u32,
     s_first_meta_bg: u32,           /* First metablock block group */
+    // --- End of Ext3 superblock ---
     s_mkfs_time: u32,               /* When the filesystem was created */
     s_jnl_blocks: [u32; 17],        /* Backup of the journal inode */
     /* 64bit support valid if EXT4_FEATURE_COMPAT_64BIT */
@@ -101,20 +107,19 @@ struct SuperBlock {
     s_snapshot_id: u32,             /* sequential ID of active snapshot */
     s_snapshot_r_blocks_count: u64, /* reserved blocks for active snapshot's future use */
     s_snapshot_list: u32,           /* inode number of the head of the on-disk snapshot list */
-// #define EXT4_S_ERR_START offsetof(struct ext4_super_block, s_error_count)
     s_error_count: u32,             /* number of fs errors */
     s_first_error_time: u32,        /* first time an error happened */
     s_first_error_ino: u32,         /* inode involved in first error */
     s_first_error_block: u64,       /* block involved of first error */
-    s_first_error_func: [u8; 32],   /* function where the error happened */ //__nonstring 
+    /// Type __nonstring __u8[32].
+    s_first_error_func: [u8; 32],   /* function where the error happened */
     s_first_error_line: u32,        /* line number where error happened */
     s_last_error_time: u32,         /* most recent time of an error */
     s_last_error_ino: u32,          /* inode involved in last error */
     s_last_error_line: u32,         /* line number where error happened */
     s_last_error_block: u64,        /* block involved of last error */
-    s_last_error_func: [u8; 32],    /* function where the error happened */ //__nonstring 
-// #define EXT4_S_ERR_END offsetof(struct ext4_super_block, s_mount_opts)
-    // s_mount_opts: 64 units of u8 (char in C).
+    /// Type __nonstring __u8[32].
+    s_last_error_func: [u8; 32],    /* function where the error happened */
     s_mount_opts: Array<u8, 64>,
     s_usr_quota_inum: u32,          /* inode for tracking user quota */
     s_grp_quota_inum: u32,          /* inode for tracking group quota */
@@ -136,14 +141,27 @@ struct SuperBlock {
     s_encoding: u16 ,               /* Filename charset encoding */
     s_encoding_flags: u16 ,         /* Filename charset encoding flags */
     s_orphan_file_inum: u32 ,       /* Inode for tracking orphan inodes */
-    // s_reserved: 94 units of u32.
-    s_reserved: Array<u32, 94>,          /* Padding to the end of the block */
+    s_reserved: Array<u32, 94>,     /* Padding to the end of the block */
     s_checksum: u32,                /* crc32c(superblock) */
 }
 
 // TODO
-/// The main procedure for processing Ext4 file systems.
-pub fn process_drive(context: &mut Context, _cfg: &Config) -> anyhow::Result<()>
+/// Process an Ext2 file system.
+pub fn process_ext2(_context: &mut Context, _cfg: &Config) -> anyhow::Result<()>
+{
+    Err(anyhow!("dummy"))
+}
+
+// TODO
+/// Process an Ext3 file system.
+pub fn process_ext3(_context: &mut Context, _cfg: &Config) -> anyhow::Result<()>
+{
+    Err(anyhow!("dummy"))
+}
+
+// TODO
+/// Process an Ext4 file system.
+pub fn process_ext4(context: &mut Context, _cfg: &Config) -> anyhow::Result<()>
 {
     let bincode_opt = DefaultOptions::new()
         .with_fixint_encoding()
@@ -154,5 +172,5 @@ pub fn process_drive(context: &mut Context, _cfg: &Config) -> anyhow::Result<()>
 
     println!("{:#?}", sb);
 
-    Err(anyhow!("Dummy"))
+    Ok(())
 }

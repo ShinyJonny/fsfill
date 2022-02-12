@@ -1,10 +1,12 @@
+use std::marker::PhantomData;
 use serde::ser::{Serialize, Serializer, SerializeTuple};
 use serde::de::{Deserialize, Deserializer, SeqAccess, Visitor, Error};
-use std::marker::PhantomData;
 
+/// Copiable, serializable, arbitraty-size array (slice).
 #[derive(Clone, Copy, Debug)]
 pub struct Array<T, const C: usize>(pub [T; C]);
 
+// Implement default initialisation.
 impl<T, const C: usize> Default for Array<T, C>
 where
     T: Default + Copy
@@ -15,11 +17,12 @@ where
     }
 }
 
+// Implement serialisation with serde.
 impl<T, const C: usize> Serialize for Array<T, C>
 where
     T: Serialize
 {
-    // Inspiration from: https://docs.serde.rs/src/serde/de/impls.rs.html
+    // Reference: https://docs.serde.rs/src/serde/de/impls.rs.html
     #[inline]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -34,7 +37,7 @@ where
     }
 }
 
-// From: https://docs.serde.rs/src/serde/de/impls.rs.html
+// Source: https://docs.serde.rs/src/serde/de/impls.rs.html
 #[derive(Debug)]
 struct ArrayVisitor<A> {
     marker: PhantomData<A>,
@@ -52,7 +55,7 @@ where
         formatter.write_str("an array")
     }
 
-    // Inspiration from: https://docs.serde.rs/src/serde/de/impls.rs.html
+    // Reference: https://docs.serde.rs/src/serde/de/impls.rs.html
     #[inline]
     fn visit_seq<A>(self, mut seq: A) ->Result<Self::Value, A::Error>
     where
@@ -71,6 +74,7 @@ where
     }
 }
 
+// Implement deserialisation with serde.
 impl<'de, T, const C: usize> Deserialize<'de> for Array<T, C>
 where
     T: Deserialize<'de> + Default + Copy

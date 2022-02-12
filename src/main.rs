@@ -1,11 +1,14 @@
 use std::path::PathBuf;
 use std::fs::{OpenOptions, File};
 use clap::Parser;
+use anyhow::anyhow;
 
 mod filesys;
 mod serial;
+mod logger;
 
 use filesys::FsType;
+use logger::Logger;
 
 #[derive(Debug, Parser)]
 #[clap(version)]
@@ -91,8 +94,8 @@ fn main()
     };
 
     let mut context = Context {
-        log_file,
         drive,
+        logger: Logger::new(cfg.verbosity, log_file),
     };
 
     // Set or detect the FS type.
@@ -100,6 +103,8 @@ fn main()
     if let Some(fs_type) = args.fs_type {
         cfg.fs_type = fs_type;
     } else {
+        context.logger.log(0, "detecting the file system type");
+
         cfg.fs_type = match filesys::detect_fs(&mut context, &cfg) {
             Ok(v) => v,
             Err(e) => {
@@ -109,14 +114,17 @@ fn main()
         };
     }
 
-    let status = match cfg.fs_type {
-        FsType::Ext4 => filesys::ext4::process_drive(&mut context, &cfg),
-    };
+    context.logger.log(0, "processing the drive");
 
-    if let Err(e) = status {
+    if let Err(e) = match cfg.fs_type {
+        FsType::Ext2 => filesys::e2fs::process_ext2(&mut context, &cfg),
+        FsType::Ext3 => filesys::e2fs::process_ext3(&mut context, &cfg),
+        FsType::Ext4 => filesys::e2fs::process_ext4(&mut context, &cfg),
+        _ => Err(anyhow!("this filesystem is not implemented yet")),
+    } {
         eprintln!("error: {}", &e);
         return;
-    }
+    };
 }
 
 /// Contains configuration options.
@@ -145,6 +153,6 @@ impl Default for Config {
 /// Contains shared mutable state.
 #[derive(Debug)]
 pub struct Context {
-    pub log_file: Option<File>,
     pub drive: File,
+    pub logger: Logger,
 }
