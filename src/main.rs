@@ -3,10 +3,12 @@ use std::fs::{OpenOptions, File};
 use clap::Parser;
 
 mod filesys;
+mod serial;
 
 use filesys::FsType;
 
 #[derive(Debug, Parser)]
+#[clap(version)]
 struct Args {
     /// Display help
     #[clap(short, long)]
@@ -17,7 +19,7 @@ struct Args {
     version: bool,
 
     /// Drive path
-    #[clap(short, long, parse(from_os_str), value_name = "DRIVE")]
+    #[clap(parse(from_os_str), value_name = "DRIVE")]
     drive: PathBuf,
 
     /// Report only, do not modify the file system
@@ -65,7 +67,7 @@ fn main()
         log_file = match f {
             Ok(f) => Some(f),
             Err(e) => {
-                eprintln!("error: {}: {}", &path.display(), e.to_string());
+                eprintln!("error: {}: {}", &path.display(), &e);
                 cfg.log_file_path = None;
                 None
             }
@@ -83,7 +85,7 @@ fn main()
     let drive = match drive {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("error: {}: {}", &cfg.drive_path.display(), e.to_string());
+            eprintln!("error: {}: {}", &cfg.drive_path.display(), &e);
             return;
         }
     };
@@ -101,18 +103,18 @@ fn main()
         cfg.fs_type = match filesys::detect_fs(&mut context, &cfg) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("error: {}", e.to_string());
+                eprintln!("error: {}", &e);
                 return;
             }
         };
     }
 
     let status = match cfg.fs_type {
-        FsType::Ext4 => filesys::process_ext4(&mut context, &cfg),
+        FsType::Ext4 => filesys::ext4::process_drive(&mut context, &cfg),
     };
 
     if let Err(e) = status {
-        eprintln!("error: {}", e.to_string());
+        eprintln!("error: {}", &e);
         return;
     }
 }
