@@ -105,7 +105,7 @@ fn main()
     } else {
         context.logger.log(0, "detecting the file system type");
 
-        cfg.fs_type = match filesys::detect_fs(&mut context, &cfg) {
+        cfg.fs_type = match filesys::detect_fs(&mut context) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("error: {}", &e);
@@ -116,10 +116,12 @@ fn main()
 
     context.logger.log(0, "processing the drive");
 
+    // Process the drive.
+
     if let Err(e) = match cfg.fs_type {
-        FsType::Ext2 => filesys::e2fs::process_ext2(&mut context, &cfg),
-        FsType::Ext3 => filesys::e2fs::process_ext3(&mut context, &cfg),
-        FsType::Ext4 => filesys::e2fs::process_ext4(&mut context, &cfg),
+        FsType::Ext2 |
+        FsType::Ext3 |
+        FsType::Ext4 => filesys::ext2::process_drive(&mut context, &cfg),
         _ => Err(anyhow!("this filesystem is not implemented yet")),
     } {
         eprintln!("error: {}", &e);

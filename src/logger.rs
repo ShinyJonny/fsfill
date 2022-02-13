@@ -23,7 +23,7 @@ impl Logger {
     pub fn log(&mut self, level: u32, msg: &str)
     {
         if self.verbosity >= level {
-            eprintln!("{}", msg);
+            println!("{}", msg);
 
             if let Some(log_file) = &mut self.log_file {
                 write!(log_file, "{}", msg).unwrap_or_else(|_| {
