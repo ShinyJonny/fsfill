@@ -2,8 +2,9 @@ use clap::ArgEnum;
 
 mod detect;
 
-pub mod ext2;
+pub mod e2fs;
 pub use detect::detect_fs;
+
 
 /// Supported file system types.
 #[derive(Clone, Debug, ArgEnum)]

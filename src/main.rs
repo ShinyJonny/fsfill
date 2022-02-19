@@ -4,11 +4,12 @@ use clap::Parser;
 use anyhow::anyhow;
 
 mod filesys;
-mod serial;
+mod array;
 mod logger;
 
 use filesys::FsType;
 use logger::Logger;
+
 
 #[derive(Debug, Parser)]
 #[clap(version)]
@@ -45,6 +46,7 @@ struct Args {
     //#[clap(long)]
     //list_types: bool,
 }
+
 
 fn main()
 {
@@ -121,13 +123,14 @@ fn main()
     if let Err(e) = match cfg.fs_type {
         FsType::Ext2 |
         FsType::Ext3 |
-        FsType::Ext4 => filesys::ext2::process_drive(&mut context, &cfg),
+        FsType::Ext4 => filesys::e2fs::process_drive(&mut context, &cfg),
         _ => Err(anyhow!("this filesystem is not implemented yet")),
     } {
         eprintln!("error: {}", &e);
         return;
     };
 }
+
 
 /// Contains configuration options.
 #[derive(Debug)]
@@ -151,6 +154,7 @@ impl Default for Config {
         }
     }
 }
+
 
 /// Contains shared mutable state.
 #[derive(Debug)]
