@@ -6,9 +6,11 @@ use anyhow::anyhow;
 mod filesys;
 mod array;
 mod logger;
+mod fill;
 
 use filesys::FsType;
 use logger::Logger;
+use fill::FillMode;
 
 
 #[derive(Debug, Parser)]
@@ -42,9 +44,9 @@ struct Args {
     #[clap(short, long, parse(from_os_str), value_name = "FILE")]
     log_file: Option<PathBuf>,
 
-    ///// List supported file system types
-    //#[clap(long)]
-    //list_types: bool,
+    /// Mode of disk filling.
+    #[clap(short, long, arg_enum, value_name = "MODE")]
+    fill_mode: Option<FillMode>
 }
 
 
@@ -57,6 +59,10 @@ fn main()
     cfg.report_only = args.report_only;
     cfg.verbosity = args.verbose;
     cfg.log_file_path = args.log_file;
+
+    if let Some(mode) = args.fill_mode {
+        cfg.fill_mode = mode;
+    }
 
     let mut log_file = None;
 
@@ -133,13 +139,14 @@ fn main()
 
 
 /// Contains configuration options.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Config {
     pub fs_type: FsType,
     pub drive_path: PathBuf,
     pub log_file_path: Option<PathBuf>,
     pub report_only: bool,
     pub verbosity: u32,
+    pub fill_mode: FillMode,
 }
 
 impl Default for Config {
@@ -151,6 +158,7 @@ impl Default for Config {
             log_file_path: None,
             report_only: false,
             verbosity: 0,
+            fill_mode: FillMode::Zero,
         }
     }
 }
