@@ -7,7 +7,7 @@ pub use detect::detect_fs;
 
 
 /// Supported file system types.
-#[derive(Clone, Debug, ArgEnum)]
+#[derive(Copy, Clone, Debug, ArgEnum)]
 pub enum FsType {
     Ext2,
     Ext3,

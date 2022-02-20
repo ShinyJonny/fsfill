@@ -491,13 +491,9 @@ fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
         error_policy: error_policy.unwrap(),
         fs_creator: fs_creator.unwrap(),
         revision: revision.unwrap(),
-        compat_features: None,
-        incompat_features: None,
-        ro_compat_features: None,
-        def_hash_version: None,
-        def_mount_opts: None,
-        flags: None,
-        encrypt_algos: None,
+        dyn_cfg: None,
+        journal_cfg: None,
+        bit64_cfg: None,
     };
 
     // --- dynamic revision level only ---
@@ -532,9 +528,11 @@ fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
             bail!("filesystem has shared blocks");
         }
 
-        fs_config.compat_features = Some(compat);
-        fs_config.incompat_features = Some(incompat);
-        fs_config.ro_compat_features = Some(ro_compat);
+        fs_config.dyn_cfg = Some(DynConfig {
+            compat_f: compat,
+            incompat_f: incompat,
+            ro_compat_f: ro_compat,
+        });
     }
 
     // --- journalling support only ---
@@ -550,8 +548,10 @@ fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
         }
         // NOTE: the DISCARD mount option could be of relevance here.
 
-        fs_config.def_hash_version = def_hash_version;
-        fs_config.def_mount_opts = Some(def_mount_opts);
+        fs_config.journal_cfg = Some(JournalConfig {
+            def_hash_ver: def_hash_version.unwrap(),
+            def_mount_opts,
+        });
     }
 
     // --- 64-bit support only ---
@@ -567,7 +567,10 @@ fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
             bail!("exclude bitmaps are corrupted");
         }
 
-        fs_config.flags = Some(flags);
+        fs_config.bit64_cfg = Some(Bit64Config {
+            flags,
+            encrypt_algos: None,
+        });
 
         if incompat.has_encrypt() {
             let mut algos: [EncryptAlgo; 4] = Default::default();
@@ -582,7 +585,7 @@ fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
                 }
             }
 
-            fs_config.encrypt_algos = Some(algos);
+            fs_config.bit64_cfg.as_mut().unwrap().encrypt_algos = Some(algos);
         }
     }
 
@@ -601,12 +604,33 @@ struct FsConfig {
     error_policy: ErrorPolicy,
     fs_creator: FsCreator,
     revision: Revision,
-    compat_features: Option<CompatFeatures>,
-    incompat_features: Option<IncompatFeatures>,
-    ro_compat_features: Option<RoCompatFeatures>,
-    def_hash_version: Option<HashVersion>,
-    def_mount_opts: Option<DefMountOpts>,
-    flags: Option<Flags>,
+    dyn_cfg: Option<DynConfig>,
+    journal_cfg: Option<JournalConfig>,
+    bit64_cfg: Option<Bit64Config>,
+}
+
+
+/// Dynamic revision configuration.
+#[derive(Copy, Clone, Debug)]
+struct DynConfig {
+    compat_f: CompatFeatures,
+    incompat_f: IncompatFeatures,
+    ro_compat_f: RoCompatFeatures,
+}
+
+
+/// Configuration for systems with journaling support.
+#[derive(Copy, Clone, Debug)]
+struct JournalConfig {
+    def_hash_ver: HashVersion,
+    def_mount_opts: DefMountOpts,
+}
+
+
+/// 64-bit configuration.
+#[derive(Copy, Clone, Debug)]
+struct Bit64Config {
+    flags: Flags,
     encrypt_algos: Option<[EncryptAlgo; 4]>,
 }
 

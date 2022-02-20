@@ -18,7 +18,10 @@ where
     }
 }
 
-impl<T: PartialEq, const C: usize> PartialEq for Array<T, C> {
+impl<T, const C: usize> PartialEq for Array<T, C>
+where
+    T: PartialEq
+{
     fn eq(&self, other: &Self) -> bool
     {
         self.0.eq(&other.0)
