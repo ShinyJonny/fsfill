@@ -7,6 +7,7 @@ mod filesys;
 mod array;
 mod logger;
 mod fill;
+mod usage_map;
 
 use filesys::FsType;
 use logger::Logger;
