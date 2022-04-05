@@ -9,6 +9,7 @@ mod logger;
 mod fill;
 mod usage_map;
 mod util;
+mod bitmap;
 
 use filesys::FsType;
 use logger::Logger;
