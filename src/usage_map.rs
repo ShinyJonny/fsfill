@@ -25,6 +25,16 @@ impl UsageMap {
         self.0.len()
     }
 
+    pub fn size(&self) -> u64
+    {
+        self.0.last().unwrap().end
+    }
+
+    pub fn update(&mut self, start: u64, size: u64, status: AllocStatus)
+    {
+        self.add_extent(Extent { start, end: start + size, status });
+    }
+
     pub fn add_extent(&mut self, new: Extent)
     {
         let vector = &self.0;
@@ -93,7 +103,7 @@ impl UsageMap {
 
     fn merge_neighbours(&mut self)
     {
-        let mut vector = &mut self.0;
+        let vector = &mut self.0;
         let mut head = 0;
 
         loop {
@@ -199,6 +209,8 @@ mod tests {
         //  * &mut UsageMap for IntoIterator.
         //  * UsageMap for Index.
         //  * UsageMap for IndexMut.
+        //
+        //  * UsageMap::size().
 
         #[test]
         fn new()

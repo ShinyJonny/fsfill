@@ -6,128 +6,196 @@ use anyhow::bail;
 
 use crate::{Context, Config};
 use crate::array::Array;
+use crate::usage_map::{UsageMap, AllocStatus};
+use crate::fill;
+use crate::hilo;
+
+
+/// Computes the block size from `s_log_block_size`.
+/// 2 ^ (10 + s_log_block_size)
+macro_rules! block_size {
+    ($bs:expr) => {
+        u64::pow(2, 10 + $bs)
+    };
+}
 
 
 /// The Ext2/3/4 Superblock structure.
 /// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuperBlock {
-    pub s_inodes_count: u32,            // Inodes count
-    pub s_blocks_count_lo: u32,         // Blocks count
-    pub s_r_blocks_count_lo: u32,       // Reserved blocks count
-    pub s_free_blocks_count_lo: u32,    // Free blocks count
-    pub s_free_inodes_count: u32,       // Free inodes count
-    pub s_first_data_block: u32,        // First Data Block
-    pub s_log_block_size: u32,          // Block size
-    pub s_log_cluster_size: u32,        // Allocation cluster size
-    pub s_blocks_per_group: u32,        // # Blocks per group
-    pub s_clusters_per_group: u32,      // # Clusters per group
-    pub s_inodes_per_group: u32,        // # Inodes per group
-    pub s_mtime: u32,                   // Mount time
-    pub s_wtime: u32,                   // Write time
-    pub s_mnt_count: u16,               // Mount count
-    pub s_max_mnt_count: u16,           // Maximal mount count
-    pub s_magic: u16,                   // Magic signature
-    pub s_state: u16,                   // File system state
-    pub s_errors: u16,                  // Behaviour when detecting errors
-    pub s_minor_rev_level: u16,         // minor revision level
-    pub s_lastcheck: u32,               // time of last check
-    pub s_checkinterval: u32,           // max. time between checks
-    pub s_creator_os: u32,              // OS
-    pub s_rev_level: u32,               // Revision level
-    pub s_def_resuid: u16,              // Default uid for reserved blocks
-    pub s_def_resgid: u16,              // Default gid for reserved blocks
+    pub s_inodes_count:            u32,            // Inodes count
+    pub s_blocks_count_lo:         u32,            // Blocks count
+    pub s_r_blocks_count_lo:       u32,            // Reserved blocks count
+    pub s_free_blocks_count_lo:    u32,            // Free blocks count
+    pub s_free_inodes_count:       u32,            // Free inodes count
+    pub s_first_data_block:        u32,            // First Data Block
+    pub s_log_block_size:          u32,            // Block size
+    pub s_log_cluster_size:        u32,            // Allocation cluster size
+    pub s_blocks_per_group:        u32,            // # Blocks per group
+    pub s_clusters_per_group:      u32,            // # Clusters per group
+    pub s_inodes_per_group:        u32,            // # Inodes per group
+    pub s_mtime:                   u32,            // Mount time
+    pub s_wtime:                   u32,            // Write time
+    pub s_mnt_count:               u16,            // Mount count
+    pub s_max_mnt_count:           u16,            // Maximal mount count
+    pub s_magic:                   u16,            // Magic signature
+    pub s_state:                   u16,            // File system state
+    pub s_errors:                  u16,            // Behaviour when detecting errors
+    pub s_minor_rev_level:         u16,            // minor revision level
+    pub s_lastcheck:               u32,            // time of last check
+    pub s_checkinterval:           u32,            // max. time between checks
+    pub s_creator_os:              u32,            // OS
+    pub s_rev_level:               u32,            // Revision level
+    pub s_def_resuid:              u16,            // Default uid for reserved blocks
+    pub s_def_resgid:              u16,            // Default gid for reserved blocks
     // --- EXT4_DYNAMIC_REV ---
-    pub s_first_ino: u32,               // First non-reserved inode
-    pub s_inode_size: u16,              // size of inode structure
-    pub s_block_group_nr: u16,          // block group # of this superblock
-    pub s_feature_compat: u32,          // compatible feature set
-    pub s_feature_incompat: u32,        // incompatible feature set
-    pub s_feature_ro_compat: u32,       // readonly-compatible feature set
-    pub s_uuid: [u8; 16],               // 128-bit uuid for volume
+    pub s_first_ino:               u32,            // First non-reserved inode
+    pub s_inode_size:              u16,            // size of inode structure
+    pub s_block_group_nr:          u16,            // block group # of this superblock
+    pub s_feature_compat:          u32,            // compatible feature set
+    pub s_feature_incompat:        u32,            // incompatible feature set
+    pub s_feature_ro_compat:       u32,            // readonly-compatible feature set
+    pub s_uuid:                    [u8; 16],       // 128-bit uuid for volume
     /// Type char[16].
-    pub s_volume_name: [u8; 16],        // volume name
+    pub s_volume_name:             [u8; 16],       // volume name
     /// Type __nonstring char[64].
-    pub s_last_mounted: Array<u8, 64>,  // directory where last mounted
-    pub s_algorithm_usage_bitmap: u32,  // For compression
+    pub s_last_mounted:            Array<u8, 64>,  // directory where last mounted
+    pub s_algorithm_usage_bitmap:  u32,            // For compression
     // --- EXT4_FEATURE_COMPAT_DIR_PREALLOC ---
-    pub s_prealloc_blocks: u8,          // Nr of blocks to try to preallocat
-    pub s_prealloc_dir_blocks: u8,      // Nr to preallocate for dirs
+    pub s_prealloc_blocks:         u8,             // Nr of blocks to try to preallocat
+    pub s_prealloc_dir_blocks:     u8,             // Nr to preallocate for dirs
     /// Named `s_padding1` in Ext2.
-    pub s_reserved_gdt_blocks: u16,     // Per group desc for online growth
+    pub s_reserved_gdt_blocks:     u16,            // Per group desc for online growth
     // --- End of Ext2 superblock ---
     // --- EXT4_FEATURE_COMPAT_HAS_JOURNAL ---
-    pub s_journal_uuid: [u8; 16],       // uuid of journal superblock
-    pub s_journal_inum: u32,            // inode number of journal file
-    pub s_journal_dev: u32,             // device number of journal file
-    pub s_last_orphan: u32,             // start of list of inodes to delete
-    pub s_hash_seed: [u32; 4],          // HTREE hash seed
-    pub s_def_hash_version: u8,         // Default hash version to use
+    pub s_journal_uuid:            [u8; 16],       // uuid of journal superblock
+    pub s_journal_inum:            u32,            // inode number of journal file
+    pub s_journal_dev:             u32,            // device number of journal file
+    pub s_last_orphan:             u32,            // start of list of inodes to delete
+    pub s_hash_seed:               [u32; 4],       // HTREE hash seed
+    pub s_def_hash_version:        u8,             // Default hash version to use
     /// Named `s_reserved_char_pad` in Ext3.
-    pub s_jnl_backup_type: u8,
+    pub s_jnl_backup_type:         u8,
     /// Named `s_reserved_word_pad` in Ext3.
-    pub s_desc_size: u16 ,              // size of group descriptor
-    pub s_default_mount_opts: u32,
-    pub s_first_meta_bg: u32,           // First metablock block group
+    pub s_desc_size:               u16,            // size of group descriptor
+    pub s_default_mount_opts:      u32,
+    pub s_first_meta_bg:           u32,            // First metablock block group
     // --- End of Ext3 superblock ---
-    pub s_mkfs_time: u32,               // When the filesystem was created
-    pub s_jnl_blocks: [u32; 17],        // Backup of the journal inode
+    pub s_mkfs_time:               u32,            // When the filesystem was created
+    pub s_jnl_blocks:              [u32; 17],      // Backup of the journal inode
     // --- EXT4_FEATURE_COMPAT_64BIT ---
-    pub s_blocks_count_hi: u32,         // Blocks count
-    pub s_r_blocks_count_hi: u32,       // Reserved blocks count
-    pub s_free_blocks_count_hi: u32,    // Free blocks count
-    pub s_min_extra_isize: u16,         // All inodes have at least # bytes
-    pub s_want_extra_isize: u16,        // New inodes should reserve # bytes
-    pub s_flags: u32,                   // Miscellaneous flags
-    pub s_raid_stride: u16 ,            // RAID stride
-    pub s_mmp_update_interval: u16 ,    // # seconds to wait in MMP checking
-    pub s_mmp_block: u64 ,              // Block for multi-mount protection
-    pub s_raid_stripe_width: u32 ,      // blocks on all data disks (
-    pub s_log_groups_per_flex: u8,      // FLEX_BG group size
-    pub s_checksum_type: u8,            // metadata checksum algorithm used
-    pub s_encryption_level: u8,         // versioning level for encryption
-    pub s_reserved_pad: u8,             // Padding to next 32bits
-    pub s_kbytes_written: u64,          // nr of lifetime kilobytes written
-    pub s_snapshot_inum: u32,           // Inode number of active snapshot
-    pub s_snapshot_id: u32,             // sequential ID of active snapshot
-    pub s_snapshot_r_blocks_count: u64, // reserved blocks for active snapshot's future use
-    pub s_snapshot_list: u32,           // inode number of the head of the on-disk snapshot list
-    pub s_error_count: u32,             // number of fs errors
-    pub s_first_error_time: u32,        // first time an error happened
-    pub s_first_error_ino: u32,         // inode involved in first error
-    pub s_first_error_block: u64,       // block involved of first error
+    pub s_blocks_count_hi:         u32,            // Blocks count
+    pub s_r_blocks_count_hi:       u32,            // Reserved blocks count
+    pub s_free_blocks_count_hi:    u32,            // Free blocks count
+    pub s_min_extra_isize:         u16,            // All inodes have at least # bytes
+    pub s_want_extra_isize:        u16,            // New inodes should reserve # bytes
+    pub s_flags:                   u32,            // Miscellaneous flags
+    pub s_raid_stride:             u16,            // RAID stride
+    pub s_mmp_update_interval:     u16,            // # seconds to wait in MMP checking
+    pub s_mmp_block:               u64,            // Block for multi-mount protection
+    pub s_raid_stripe_width:       u32,            // blocks on all data disks (
+    pub s_log_groups_per_flex:     u8,             // FLEX_BG group size
+    pub s_checksum_type:           u8,             // metadata checksum algorithm used
+    pub s_encryption_level:        u8,             // versioning level for encryption
+    pub s_reserved_pad:            u8,             // Padding to next 32bits
+    pub s_kbytes_written:          u64,            // nr of lifetime kilobytes written
+    pub s_snapshot_inum:           u32,            // Inode number of active snapshot
+    pub s_snapshot_id:             u32,            // sequential ID of active snapshot
+    pub s_snapshot_r_blocks_count: u64,            // reserved blocks for active snapshot's future use
+    pub s_snapshot_list:           u32,            // inode number of the head of the on-disk snapshot list
+    pub s_error_count:             u32,            // number of fs errors
+    pub s_first_error_time:        u32,            // first time an error happened
+    pub s_first_error_ino:         u32,            // inode involved in first error
+    pub s_first_error_block:       u64,            // block involved of first error
     /// Type __nonstring __u8[32].
-    pub s_first_error_func: [u8; 32],   // function where the error happened
-    pub s_first_error_line: u32,        // line number where error happened
-    pub s_last_error_time: u32,         // most recent time of an error
-    pub s_last_error_ino: u32,          // inode involved in last error
-    pub s_last_error_line: u32,         // line number where error happened
-    pub s_last_error_block: u64,        // block involved of last error
+    pub s_first_error_func:        [u8; 32],       // function where the error happened
+    pub s_first_error_line:        u32,            // line number where error happened
+    pub s_last_error_time:         u32,            // most recent time of an error
+    pub s_last_error_ino:          u32,            // inode involved in last error
+    pub s_last_error_line:         u32,            // line number where error happened
+    pub s_last_error_block:        u64,            // block involved of last error
     /// Type __nonstring __u8[32].
-    pub s_last_error_func: [u8; 32],    // function where the error happened
-    pub s_mount_opts: Array<u8, 64>,
-    pub s_usr_quota_inum: u32,          // inode for tracking user quota
-    pub s_grp_quota_inum: u32,          // inode for tracking group quota
-    pub s_overhead_clusters: u32,       // overhead blocks/clusters in fs
-    pub s_backup_bgs: [u32; 2],         // groups with sparse_super2 SBs
-    pub s_encrypt_algos: [u8; 4],       // Encryption algorithms in use 
-    pub s_encrypt_pw_salt: [u8; 16],    // Salt used for string2key algorithm
-    pub s_lpf_ino: u32,                 // Location of the lost+found inode
-    pub s_prj_quota_inum: u32,          // inode for tracking project quota
-    pub s_checksum_seed: u32,           // crc32c(uuid) if csum_seed set
-    pub s_wtime_hi: u8,
-    pub s_mtime_hi: u8,
-    pub s_mkfs_time_hi: u8,
-    pub s_lastcheck_hi: u8,
-    pub s_first_error_time_hi: u8,
-    pub s_last_error_time_hi: u8,
-    pub s_first_error_errcode: u8,
-    pub s_last_error_errcode: u8   ,
-    pub s_encoding: u16 ,               // Filename charset encoding
-    pub s_encoding_flags: u16 ,         // Filename charset encoding flags
-    pub s_orphan_file_inum: u32 ,       // Inode for tracking orphan inodes
-    pub s_reserved: Array<u32, 94>,     // Padding to the end of the block
-    pub s_checksum: u32,                // crc32c(superblock)
+    pub s_last_error_func:         [u8; 32],       // function where the error happened
+    pub s_mount_opts:              Array<u8, 64>,
+    pub s_usr_quota_inum:          u32,            // inode for tracking user quota
+    pub s_grp_quota_inum:          u32,            // inode for tracking group quota
+    pub s_overhead_clusters:       u32,            // overhead blocks/clusters in fs
+    pub s_backup_bgs:              [u32; 2],       // groups with sparse_super2 SBs
+    pub s_encrypt_algos:           [u8; 4],        // Encryption algorithms in use 
+    pub s_encrypt_pw_salt:         [u8; 16],       // Salt used for string2key algorithm
+    pub s_lpf_ino:                 u32,            // Location of the lost+found inode
+    pub s_prj_quota_inum:          u32,            // inode for tracking project quota
+    pub s_checksum_seed:           u32,            // crc32c(uuid) if csum_seed set
+    pub s_wtime_hi:                u8,
+    pub s_mtime_hi:                u8,
+    pub s_mkfs_time_hi:            u8,
+    pub s_lastcheck_hi:            u8,
+    pub s_first_error_time_hi:     u8,
+    pub s_last_error_time_hi:      u8,
+    pub s_first_error_errcode:     u8,
+    pub s_last_error_errcode:      u8,
+    pub s_encoding:                u16,            // Filename charset encoding
+    pub s_encoding_flags:          u16,            // Filename charset encoding flags
+    pub s_orphan_file_inum:        u32,            // Inode for tracking orphan inodes
+    pub s_reserved:                Array<u32, 94>, // Padding to the end of the block
+    pub s_checksum:                u32,            // crc32c(superblock)
+}
+
+
+/// The Ext2/3/4 group descriptor structure.
+/// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct GroupDescriptor {
+    pub bg_block_bitmap_lo:      u32, // Blocks bitmap block
+    pub bg_inode_bitmap_lo:      u32, // Inodes bitmap block
+    pub bg_inode_table_lo:       u32, // Inodes table block
+    pub bg_free_blocks_count_lo: u16, // Free blocks count
+    pub bg_free_inodes_count_lo: u16, // Free inodes count
+    pub bg_used_dirs_count_lo:   u16, // Directories count
+    pub bg_flags:                u16, // EXT4_BG_flags (INODE_UNINIT, etc)
+    pub bg_exclude_bitmap_lo:    u32, // Exclude bitmap for snapshots
+    pub bg_block_bitmap_csum_lo: u16, // crc32c(s_uuid+grp_num+bbitmap) LE
+    pub bg_inode_bitmap_csum_lo: u16, // crc32c(s_uuid+grp_num+ibitmap) LE
+    pub bg_itable_unused_lo:     u16, // Unused inodes count
+    pub bg_checksum:             u16, // crc16(sb_uuid+group+desc)
+    // --- End of Ext2/3 descriptor ---
+    pub bg_block_bitmap_hi:      u32, // Blocks bitmap block MSB
+    pub bg_inode_bitmap_hi:      u32, // Inodes bitmap block MSB
+    pub bg_inode_table_hi:       u32, // Inodes table block MSB
+    pub bg_free_blocks_count_hi: u16, // Free blocks count MSB
+    pub bg_free_inodes_count_hi: u16, // Free inodes count MSB
+    pub bg_used_dirs_count_hi:   u16, // Directories count MSB
+    pub bg_itable_unused_hi:     u16, // Unused inodes count MSB
+    pub bg_exclude_bitmap_hi:    u32, // Exclude bitmap block MSB
+    pub bg_block_bitmap_csum_hi: u16, // crc32c(s_uuid+grp_num+bbitmap) BE
+    pub bg_inode_bitmap_csum_hi: u16, // crc32c(s_uuid+grp_num+ibitmap) BE
+    pub bg_reserved:             u32,
+}
+
+
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L1970
+const GOOD_OLD_INODE_SIZE: u16 = 128;
+
+
+// NOTE: Debug is derived.
+#[derive(Copy, Clone, Debug)]
+struct BgFlags(u16);
+
+impl BgFlags {
+    pub fn has_inode_uninit(&self) -> bool { self.0 & 0x01 != 0 }
+    pub fn has_block_uninit(&self) -> bool { self.0 & 0x02 != 0 }
+    pub fn has_inode_zeroed(&self) -> bool { self.0 & 0x04 != 0 }
+
+    pub fn get_unknown(&self) -> u16
+    {
+        (self.0 >> 3) << 3
+    }
+
+    pub fn has_unknown(&self) -> bool
+    {
+        self.get_unknown() != 0
+    }
 }
 
 
@@ -256,6 +324,7 @@ struct RoCompatFeatures(u32);
 impl RoCompatFeatures {
     pub fn has_sparse_super(&self)    -> bool { self.0 & 0x00001 != 0 }
     pub fn has_large_file(&self)      -> bool { self.0 & 0x00002 != 0 }
+    /// Not used in e2fsprogs.
     pub fn has_btree_dir(&self)       -> bool { self.0 & 0x00004 != 0 }
     pub fn has_huge_file(&self)       -> bool { self.0 & 0x00008 != 0 }
     pub fn has_gdt_csum(&self)        -> bool { self.0 & 0x00010 != 0 }
@@ -382,26 +451,220 @@ impl Default for EncryptAlgo {
 
 // TODO
 /// Process an Ext2/3/4 file system.
-pub fn process_drive(context: &mut Context, cfg: &Config) -> anyhow::Result<()>
+pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
 {
     let bincode_opt = DefaultOptions::new()
         .with_fixint_encoding()
         .allow_trailing_bytes();
 
-    context.drive.seek(SeekFrom::Start(1024))?;
-    let sb: SuperBlock = bincode_opt.deserialize_from(&context.drive)?;
-    let fs_config = check_and_get_fsconfig(&sb, cfg)?;
+    ctx.drive.seek(SeekFrom::Start(1024))?;
+    let sb: SuperBlock = bincode_opt.deserialize_from(&ctx.drive)?;
+    let fs_cfg = get_and_check_fsconfig(&sb, cfg)?;
 
     println!("{:#?}", sb);
-    println!("{:#?}", fs_config);
+    println!("{:#?}", fs_cfg);
+
+    let mut blocks_count = sb.s_blocks_count_lo as u64;
+    if fs_cfg.bit64_cfg.is_some() {
+        blocks_count = hilo!(sb.s_blocks_count_hi, sb.s_blocks_count_lo);
+    }
+    let mut bg_count = blocks_count / sb.s_blocks_per_group as u64;
+    if blocks_count % sb.s_blocks_per_group as u64 != 0 {
+        bg_count += 1;
+    }
+
+    for i in 0..bg_count {
+        let desc = fetch_regular_bg_descriptor(i, &sb, ctx)?;
+        print!("{:04}: ", i);
+        println!("{:#?}", desc);
+        if desc.bg_flags & 4 == 0 {
+            println!("NOT ZEROED")
+        }
+    }
+
+    let free_blocks = scan_free_space(&fs_cfg, &sb, ctx, cfg)?;
+
+    if !cfg.report_only {
+        fill::fill_drive(&free_blocks, ctx, cfg)?;
+    }
 
     Ok(())
 }
 
 
-// TODO: migrate to a proper custom Result struct.
+// TODO
+fn scan_free_space(fs_cfg: &FsConfig, sb: &SuperBlock, ctx: &mut Context, _cfg: &Config) -> anyhow::Result<UsageMap>
+{
+    let drive_size = ctx.drive.seek(SeekFrom::End(0))?;
+    let mut map = UsageMap::new(drive_size);
+
+    let mut blocks_count = sb.s_blocks_count_lo as u64;
+    if fs_cfg.bit64_cfg.is_some() {
+        blocks_count = hilo!(sb.s_blocks_count_hi, sb.s_blocks_count_lo);
+    }
+
+    let mut bg_count = blocks_count / sb.s_blocks_per_group as u64;
+    if blocks_count % sb.s_blocks_per_group as u64 != 0 {
+        bg_count += 1;
+    }
+
+    for num in 0..bg_count {
+        scan_regular_bg(&mut map, num, fs_cfg, sb, ctx)?;
+    }
+    println!("{:#?}", &map);
+
+    bail!("dummy");
+}
+
+
+/// Processes a regular block group, scans the free space and updates the supplied UsageMap.
+fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs_cfg: &FsConfig, sb: &SuperBlock, ctx: &mut Context) -> anyhow::Result<()>
+{
+    let block_size = block_size!(sb.s_log_block_size);
+    let mut skip_super = false;
+
+    // Check if we skip the superblock and gdt.
+    if let Some(dyn_cfg) = fs_cfg.dyn_cfg {
+        if dyn_cfg.ro_compat_f.has_sparse_super()
+            && bg_num != 0
+            && bg_num % 3 != 0
+            && bg_num % 5 != 0
+            && bg_num % 7 != 0
+        {
+            skip_super = true;
+        }
+    }
+
+    if !skip_super {
+        let mut pos = bg_num * block_size;
+
+        // The empty space at the beginning of the file system.
+        if bg_num == 0 {
+            map.update(0, 1024, AllocStatus::Used);
+            if sb.s_first_data_block == 0 {
+                pos += 1024;
+            } else {
+                pos = block_size * sb.s_first_data_block as u64;
+            }
+        }
+
+        // The superblock.
+        map.update(pos, 1024, AllocStatus::Used);
+        pos += block_size;
+        if bg_num == 0 && sb.s_first_data_block == 0 {
+            pos -= 1024;
+        }
+
+        let blocks_count = if fs_cfg.bit64_cfg.is_some() {
+            hilo!(sb.s_blocks_count_hi, sb.s_blocks_count_lo)
+        } else {
+            sb.s_blocks_count_lo as u64
+        };
+
+        let mut bg_count = blocks_count / sb.s_blocks_per_group as u64;
+        if blocks_count % sb.s_blocks_per_group as u64 != 0 {
+            bg_count += 1;
+        }
+
+        let desc_size = if sb.s_desc_size == 0 {
+            32
+        } else {
+            sb.s_desc_size as u64
+        };
+
+        let gdt_size = bg_count * desc_size;
+        // The group descriptors.
+        map.update(pos, gdt_size, AllocStatus::Used);
+        //if gdt_size % block_size == 0 {
+        //    pos += gdt_size;
+        //} else {
+        //    pos += (gdt_size / block_size) + block_size * 1;
+        //}
+    }
+
+    let desc = fetch_regular_bg_descriptor(bg_num, sb, ctx)?;
+    let bg_flags = BgFlags { 0: desc.bg_flags };
+
+    if bg_flags.has_unknown() {
+        ctx.logger.log(0, &format!("group descriptor {} has unknown flags: {}", bg_num, bg_flags.get_unknown()));
+        bail!("{:?}", desc);
+    }
+
+    let inode_bitmap_block = if fs_cfg.bit64_cfg.is_some() {
+        hilo!(desc.bg_inode_bitmap_hi, desc.bg_inode_bitmap_lo)
+    } else {
+        desc.bg_inode_bitmap_lo as u64
+    };
+
+    // Inode bitmap.
+    if !bg_flags.has_inode_uninit() {
+        map.update(inode_bitmap_block * block_size, block_size, AllocStatus::Used);
+    }
+
+    let block_bitmap_block = if fs_cfg.bit64_cfg.is_some() {
+        hilo!(desc.bg_block_bitmap_hi, desc.bg_block_bitmap_lo)
+    } else {
+        desc.bg_block_bitmap_lo as u64
+    };
+
+    // Block bitmap.
+    if !bg_flags.has_block_uninit() {
+        map.update(block_bitmap_block * block_size, block_size, AllocStatus::Used);
+    }
+
+    let inode_table_block = if fs_cfg.bit64_cfg.is_some() {
+        hilo!(desc.bg_inode_table_hi, desc.bg_inode_table_lo)
+    } else {
+        desc.bg_inode_table_lo as u64
+    };
+    let inode_size = if fs_cfg.dyn_cfg.is_some() {
+        sb.s_inode_size as u64
+    } else {
+        GOOD_OLD_INODE_SIZE as u64
+    };
+
+    // Inode table.
+    if bg_flags.has_inode_zeroed() {
+        map.update(
+            inode_table_block * block_size,
+            sb.s_inodes_per_group as u64 * inode_size,
+            AllocStatus::Used
+        );
+    }
+
+    Ok(()) // TODO
+}
+
+
+/// Fetches a block group descriptor, based on the number of the block group.
+/// Descriptors are read from the first block group. This procedure assumes that the standard
+/// layout (not META_BG) is used.
+fn fetch_regular_bg_descriptor(bg_num: u64, sb: &SuperBlock, ctx: &mut Context) -> anyhow::Result<GroupDescriptor>
+{
+    let bincode_opt = DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes();
+
+    let bs = block_size!(sb.s_log_block_size);
+    // The descriptors begin at the first data block + the super block.
+    let desc_table_start = bs * sb.s_first_data_block as u64 + bs;
+    let desc_size = if sb.s_desc_size == 0 {
+        32
+    } else {
+        sb.s_desc_size as u64
+    };
+    let offset = desc_table_start + desc_size as u64 * bg_num;
+
+    ctx.drive.seek(SeekFrom::Start(offset))?;
+    let desc: GroupDescriptor = bincode_opt.deserialize_from(&ctx.drive)?;
+
+    Ok(desc)
+}
+
+
 // TODO: make different errors acceptable through the use of cli flags.
-fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsConfig>
+/// Creates FsConfig from a super block and checks it for invalid or unsupported configuration.
+fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsConfig>
 {
     // Constructing enums and flag fields.
 
@@ -498,9 +761,15 @@ fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
 
     // --- dynamic revision level only ---
 
-    if let Some(Revision::Dynamic) = revision {
+    if let Revision::Dynamic = fs_config.revision {
         if compat.has_unknown() {
             bail!("unknown `s_feature_compat` flags: {:#010x}", compat.0);
+        }
+        if compat.has_exclude_inode() {
+            bail!("unsupported feature: exclude_inode");
+        }
+        if compat.has_exclude_bitmap() {
+            bail!("unsupported feature: exclude_bitmap");
         }
 
         if incompat.has_unknown() {
@@ -511,6 +780,16 @@ fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
         }
         if incompat.has_journal_dev() {
             bail!("filesystem has an external journaling device");
+        }
+        // TODO: Add support for META_BG.
+        if incompat.has_meta_bg() {
+            bail!("META_BG is not supported due to conflicting documentation");
+        }
+        if incompat.has_dirdata() {
+            bail!("unsupported feature: dirdata");
+        }
+        if incompat.has_encrypt() {
+            bail!("filesystem has encrypted blocks");
         }
 
         if ro_compat.has_unknown() {
@@ -596,8 +875,8 @@ fn check_and_get_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
 
 
 /// The file system configuration, after checking all the options.
-/// Contains all the flag fields and enumerations. Does not substitute, but complements the
-/// SuperBlock structure.
+/// Contains all the flag fields, enumerations and other computed fields. Does not substitute, but
+/// complements the SuperBlock structure.
 #[derive(Copy, Clone, Debug)]
 struct FsConfig {
     state: State,
