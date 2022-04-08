@@ -39,6 +39,14 @@ struct Args {
     #[clap(short = 't', long = "type", arg_enum, value_name = "TYPE")]
     fs_type: Option<FsType>,
 
+    /// Ignore the recovery error
+    #[clap(short = 'R', long)]
+    ignore_recovery: bool,
+
+    /// Ignore read-only flags.
+    #[clap(short = 'O', long)]
+    ignore_readonly: bool,
+
     /// Set verbosity of the output (can be used multiple times)
     #[clap(short, long, parse(from_occurrences))]
     verbose: u32,
@@ -62,6 +70,8 @@ fn main()
     cfg.report_only = args.report_only;
     cfg.verbosity = args.verbose;
     cfg.log_file_path = args.log_file;
+    cfg.ignore_recovery = args.ignore_recovery;
+    cfg.ignore_readonly = args.ignore_readonly;
 
     if let Some(mode) = args.fill_mode {
         cfg.fill_mode = mode;
@@ -150,6 +160,8 @@ pub struct Config {
     pub report_only: bool,
     pub verbosity: u32,
     pub fill_mode: FillMode,
+    pub ignore_recovery: bool,
+    pub ignore_readonly: bool,
 }
 
 impl Default for Config {
@@ -162,6 +174,8 @@ impl Default for Config {
             report_only: false,
             verbosity: 0,
             fill_mode: FillMode::Zero,
+            ignore_recovery: false,
+            ignore_readonly: false,
         }
     }
 }

@@ -32,7 +32,17 @@ impl UsageMap {
 
     pub fn update(&mut self, start: u64, size: u64, status: AllocStatus)
     {
-        self.add_extent(Extent { start, end: start + size, status });
+        // Tolerate reaching beyond the end of the map.
+        let map_size = self.size();
+        let end = if start + size > map_size {
+            map_size
+        } else {
+            start + size
+        };
+
+        assert!(start <= map_size);
+
+        self.add_extent(Extent { start, end, status });
     }
 
     pub fn add_extent(&mut self, new: Extent)

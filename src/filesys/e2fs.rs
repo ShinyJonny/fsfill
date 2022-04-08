@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::io::{Seek, SeekFrom};
+use std::io::{Seek, SeekFrom, Read};
 use serde::{Serialize, Deserialize};
 use bincode::{Options, DefaultOptions};
 use anyhow::bail;
@@ -9,11 +9,12 @@ use crate::array::Array;
 use crate::usage_map::{UsageMap, AllocStatus};
 use crate::fill;
 use crate::hilo;
+use crate::bitmap::Bitmap;
 
 
 /// Computes the block size from `s_log_block_size`.
 /// 2 ^ (10 + s_log_block_size)
-macro_rules! block_size {
+macro_rules! bs {
     ($bs:expr) => {
         u64::pow(2, 10 + $bs)
     };
@@ -122,7 +123,7 @@ pub struct SuperBlock {
     pub s_grp_quota_inum:          u32,            // inode for tracking group quota
     pub s_overhead_clusters:       u32,            // overhead blocks/clusters in fs
     pub s_backup_bgs:              [u32; 2],       // groups with sparse_super2 SBs
-    pub s_encrypt_algos:           [u8; 4],        // Encryption algorithms in use 
+    pub s_encrypt_algos:           [u8; 4],        // Encryption algorithms in use
     pub s_encrypt_pw_salt:         [u8; 16],       // Salt used for string2key algorithm
     pub s_lpf_ino:                 u32,            // Location of the lost+found inode
     pub s_prj_quota_inum:          u32,            // inode for tracking project quota
@@ -174,8 +175,10 @@ struct GroupDescriptor {
 }
 
 
-// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L1970
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
+
 const GOOD_OLD_INODE_SIZE: u16 = 128;
+const MIN_DESC_SIZE:       u16 = 32;
 
 
 // NOTE: Debug is derived.
@@ -459,30 +462,66 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
 
     ctx.drive.seek(SeekFrom::Start(1024))?;
     let sb: SuperBlock = bincode_opt.deserialize_from(&ctx.drive)?;
-    let fs_cfg = get_and_check_fsconfig(&sb, cfg)?;
+    let opts = get_and_check_fs_options(&sb, cfg)?;
 
-    println!("{:#?}", sb);
-    println!("{:#?}", fs_cfg);
+    // Computing values that will be needed across multiple procedures.
 
-    let mut blocks_count = sb.s_blocks_count_lo as u64;
-    if fs_cfg.bit64_cfg.is_some() {
-        blocks_count = hilo!(sb.s_blocks_count_hi, sb.s_blocks_count_lo);
-    }
-    let mut bg_count = blocks_count / sb.s_blocks_per_group as u64;
-    if blocks_count % sb.s_blocks_per_group as u64 != 0 {
+    let blocks_count = if opts.bit64_cfg.is_some() {
+        hilo!(sb.s_blocks_count_hi, sb.s_blocks_count_lo)
+    } else {
+        sb.s_blocks_count_lo as u64
+    };
+    let mut bg_count = (blocks_count - sb.s_first_data_block as u64) / sb.s_blocks_per_group as u64;
+    if (blocks_count - sb.s_first_data_block as u64) % sb.s_blocks_per_group as u64 != 0 {
         bg_count += 1;
     }
+    let bg_size = sb.s_blocks_per_group as u64 * bs!(sb.s_log_block_size);
+    let desc_size = if sb.s_desc_size == 0 {
+        32
+    } else {
+        sb.s_desc_size as u64
+    };
+    let inode_size = if opts.dyn_cfg.is_some() {
+        sb.s_inode_size as u64
+    } else {
+        GOOD_OLD_INODE_SIZE as u64
+    };
+    // Source: https://github.com/tytso/e2fsprogs/blob/master/lib/ext2fs/csum.c#L33
+    let csum_seed = if let Some(dyn_cfg) = opts.dyn_cfg {
+        if dyn_cfg.incompat.has_csum_seed() {
+            Some(sb.s_checksum_seed)
+        } else if dyn_cfg.ro_compat.has_metadata_csum() || dyn_cfg.incompat.has_ea_inode() {
+            Some(ext4_style_crc32c_le(!0, &sb.s_uuid))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let fs = Fs {
+        sb,
+        opts,
+        blocks_count,
+        bg_count,
+        bg_size,
+        desc_size,
+        inode_size,
+        csum_seed,
+    };
+
+    println!("{:#?}", &fs);
 
     for i in 0..bg_count {
-        let desc = fetch_regular_bg_descriptor(i, &sb, ctx)?;
+        let desc = fetch_regular_bg_descriptor(i, &fs, ctx)?;
         print!("{:04}: ", i);
-        println!("{:#?}", desc);
+        println!("{:#?}", &desc);
         if desc.bg_flags & 4 == 0 {
             println!("NOT ZEROED")
         }
     }
 
-    let free_blocks = scan_free_space(&fs_cfg, &sb, ctx, cfg)?;
+    let free_blocks = scan_free_space(&fs, ctx, cfg)?;
 
     if !cfg.report_only {
         fill::fill_drive(&free_blocks, ctx, cfg)?;
@@ -493,23 +532,13 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
 
 
 // TODO
-fn scan_free_space(fs_cfg: &FsConfig, sb: &SuperBlock, ctx: &mut Context, _cfg: &Config) -> anyhow::Result<UsageMap>
+fn scan_free_space(fs: &Fs, ctx: &mut Context, _cfg: &Config) -> anyhow::Result<UsageMap>
 {
     let drive_size = ctx.drive.seek(SeekFrom::End(0))?;
     let mut map = UsageMap::new(drive_size);
 
-    let mut blocks_count = sb.s_blocks_count_lo as u64;
-    if fs_cfg.bit64_cfg.is_some() {
-        blocks_count = hilo!(sb.s_blocks_count_hi, sb.s_blocks_count_lo);
-    }
-
-    let mut bg_count = blocks_count / sb.s_blocks_per_group as u64;
-    if blocks_count % sb.s_blocks_per_group as u64 != 0 {
-        bg_count += 1;
-    }
-
-    for num in 0..bg_count {
-        scan_regular_bg(&mut map, num, fs_cfg, sb, ctx)?;
+    for num in 0..fs.bg_count {
+        scan_regular_bg(&mut map, num, fs, ctx)?;
     }
     println!("{:#?}", &map);
 
@@ -518,14 +547,21 @@ fn scan_free_space(fs_cfg: &FsConfig, sb: &SuperBlock, ctx: &mut Context, _cfg: 
 
 
 /// Processes a regular block group, scans the free space and updates the supplied UsageMap.
-fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs_cfg: &FsConfig, sb: &SuperBlock, ctx: &mut Context) -> anyhow::Result<()>
+fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
 {
-    let block_size = block_size!(sb.s_log_block_size);
+    ctx.logger.log(2, &format!("processing block group {:010}", bg_num));
+
+    let block_size = bs!(fs.sb.s_log_block_size);
+    let bg_start = fs.sb.s_first_data_block as u64 * block_size + bg_num * fs.bg_size;
     let mut skip_super = false;
+    let has_csum = match fs.opts.dyn_cfg {
+        Some(dyn_cfg) => dyn_cfg.ro_compat.has_metadata_csum() || dyn_cfg.ro_compat.has_gdt_csum(),
+        None => false,
+    };
 
     // Check if we skip the superblock and gdt.
-    if let Some(dyn_cfg) = fs_cfg.dyn_cfg {
-        if dyn_cfg.ro_compat_f.has_sparse_super()
+    if let Some(dyn_cfg) = fs.opts.dyn_cfg {
+        if dyn_cfg.ro_compat.has_sparse_super()
             && bg_num != 0
             && bg_num % 3 != 0
             && bg_num % 5 != 0
@@ -533,56 +569,76 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs_cfg: &FsConfig, sb: &Supe
         {
             skip_super = true;
         }
+
+        if dyn_cfg.compat.has_sparse_super2()
+            && bg_num != fs.sb.s_backup_bgs[0] as u64
+            && bg_num != fs.sb.s_backup_bgs[1] as u64
+        {
+            skip_super = true;
+        }
     }
 
     if !skip_super {
-        let mut pos = bg_num * block_size;
-
-        // The empty space at the beginning of the file system.
-        if bg_num == 0 {
-            map.update(0, 1024, AllocStatus::Used);
-            if sb.s_first_data_block == 0 {
-                pos += 1024;
-            } else {
-                pos = block_size * sb.s_first_data_block as u64;
-            }
-        }
+        let gdt_table_start: u64;
 
         // The superblock.
-        map.update(pos, 1024, AllocStatus::Used);
-        pos += block_size;
-        if bg_num == 0 && sb.s_first_data_block == 0 {
-            pos -= 1024;
+        if bg_num == 0 {
+            // The empty space at the beginning of the drive and the superblock.
+            map.update(0, 2048, AllocStatus::Used);
+            // NOTE: s_first_data_block > 1 is not accounted for.
+            gdt_table_start = if block_size == 1024 {
+                2048
+            } else {
+                block_size
+            };
+        } else {
+            map.update(bg_start, 1024, AllocStatus::Used);
+            gdt_table_start = bg_start + block_size;
         }
 
-        let blocks_count = if fs_cfg.bit64_cfg.is_some() {
-            hilo!(sb.s_blocks_count_hi, sb.s_blocks_count_lo)
-        } else {
-            sb.s_blocks_count_lo as u64
-        };
+        println!("gdt table: {}", gdt_table_start); // [debug]
 
-        let mut bg_count = blocks_count / sb.s_blocks_per_group as u64;
-        if blocks_count % sb.s_blocks_per_group as u64 != 0 {
-            bg_count += 1;
-        }
-
-        let desc_size = if sb.s_desc_size == 0 {
-            32
-        } else {
-            sb.s_desc_size as u64
-        };
-
-        let gdt_size = bg_count * desc_size;
         // The group descriptors.
-        map.update(pos, gdt_size, AllocStatus::Used);
-        //if gdt_size % block_size == 0 {
-        //    pos += gdt_size;
-        //} else {
-        //    pos += (gdt_size / block_size) + block_size * 1;
-        //}
+        if has_csum {
+            let bincode_opt = DefaultOptions::new()
+                .with_fixint_encoding()
+                .allow_trailing_bytes();
+
+            let mut gdt_table = vec![u8::default(); fs.bg_count as usize * fs.desc_size as usize];
+            ctx.drive.seek(SeekFrom::Start(gdt_table_start))?;
+            ctx.drive.read_exact(gdt_table.as_mut_slice())?;
+
+            for i in 0..fs.bg_count {
+                let desc: GroupDescriptor = bincode_opt.deserialize(
+                    &gdt_table[(i * fs.desc_size) as usize..]
+                )?;
+
+                if verify_desc_csum(&desc, i, fs)? {
+                    map.update(
+                        gdt_table_start + (i * fs.desc_size),
+                        fs.desc_size,
+                        AllocStatus::Used
+                    );
+                    if i == 0 { // [debug]
+                        println!("verified"); // [debug]
+                    } // [debug]
+                }
+            }
+        } else {
+            // Without checksumming, the whole descriptor table must be initialised.
+            let gdt_size = fs.bg_count * fs.desc_size;
+            map.update(gdt_table_start, gdt_size, AllocStatus::Used);
+        }
     }
 
-    let desc = fetch_regular_bg_descriptor(bg_num, sb, ctx)?;
+    let desc = fetch_regular_bg_descriptor(bg_num, fs, ctx)?;
+
+    if has_csum {
+        if !verify_desc_csum(&desc, bg_num, fs)? {
+            return Ok(());
+        }
+    }
+
     let bg_flags = BgFlags { 0: desc.bg_flags };
 
     if bg_flags.has_unknown() {
@@ -590,70 +646,100 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs_cfg: &FsConfig, sb: &Supe
         bail!("{:?}", desc);
     }
 
-    let inode_bitmap_block = if fs_cfg.bit64_cfg.is_some() {
+    let inode_bitmap_block = if fs.opts.bit64_cfg.is_some() {
         hilo!(desc.bg_inode_bitmap_hi, desc.bg_inode_bitmap_lo)
     } else {
         desc.bg_inode_bitmap_lo as u64
     };
+
+    println!("inode bitmap: {}", inode_bitmap_block); // [debug]
 
     // Inode bitmap.
     if !bg_flags.has_inode_uninit() {
         map.update(inode_bitmap_block * block_size, block_size, AllocStatus::Used);
     }
 
-    let block_bitmap_block = if fs_cfg.bit64_cfg.is_some() {
+    let block_bitmap_block = if fs.opts.bit64_cfg.is_some() {
         hilo!(desc.bg_block_bitmap_hi, desc.bg_block_bitmap_lo)
     } else {
         desc.bg_block_bitmap_lo as u64
     };
+
+    println!("block bitmap: {}", block_bitmap_block); // [debug]
 
     // Block bitmap.
     if !bg_flags.has_block_uninit() {
         map.update(block_bitmap_block * block_size, block_size, AllocStatus::Used);
     }
 
-    let inode_table_block = if fs_cfg.bit64_cfg.is_some() {
+    let inode_table_block = if fs.opts.bit64_cfg.is_some() {
         hilo!(desc.bg_inode_table_hi, desc.bg_inode_table_lo)
     } else {
         desc.bg_inode_table_lo as u64
     };
-    let inode_size = if fs_cfg.dyn_cfg.is_some() {
-        sb.s_inode_size as u64
-    } else {
-        GOOD_OLD_INODE_SIZE as u64
-    };
+
+    println!("inode table: {}", inode_table_block); // [debug]
 
     // Inode table.
     if bg_flags.has_inode_zeroed() {
         map.update(
             inode_table_block * block_size,
-            sb.s_inodes_per_group as u64 * inode_size,
+            fs.sb.s_inodes_per_group as u64 * fs.inode_size,
             AllocStatus::Used
         );
     }
 
-    Ok(()) // TODO
+    ctx.drive.seek(SeekFrom::Start(block_bitmap_block * block_size))?;
+    let bmp = Bitmap::from_reader(&mut ctx.drive, block_size as usize)?;
+
+    let cluster_size = bs!(fs.sb.s_log_cluster_size);
+    let mut cluster_count = fs.sb.s_clusters_per_group as u64;
+
+    if bg_start + cluster_count * cluster_size > map.size() {
+        let group_size = map.size() - bg_start;
+
+        cluster_count = group_size / cluster_size;
+        if group_size % cluster_size != 0 {
+            cluster_count += 1;
+        }
+    }
+
+    // NOTE: This is probably the only thing needed.
+    // All of the above steps are meaningful only when doing deep inspection, including
+    // inode-referenced blocks, extents, etc. In such a case, this would have to be removed.
+    // FIXME: When a block is marked as used, it does not necessarily mean that it is initialised.
+
+    for i in 0..cluster_count as usize {
+        if bmp.check_bit(i) {
+            map.update(
+                bg_start + i as u64 * cluster_size,
+                cluster_size,
+                AllocStatus::Used
+            );
+        }
+    }
+
+    // TODO
+    Ok(())
 }
 
 
 /// Fetches a block group descriptor, based on the number of the block group.
 /// Descriptors are read from the first block group. This procedure assumes that the standard
 /// layout (not META_BG) is used.
-fn fetch_regular_bg_descriptor(bg_num: u64, sb: &SuperBlock, ctx: &mut Context) -> anyhow::Result<GroupDescriptor>
+fn fetch_regular_bg_descriptor(bg_num: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<GroupDescriptor>
 {
     let bincode_opt = DefaultOptions::new()
         .with_fixint_encoding()
         .allow_trailing_bytes();
 
-    let bs = block_size!(sb.s_log_block_size);
-    // The descriptors begin at the first data block + the super block.
-    let desc_table_start = bs * sb.s_first_data_block as u64 + bs;
-    let desc_size = if sb.s_desc_size == 0 {
-        32
+    let bs = bs!(fs.sb.s_log_block_size);
+    let desc_table_start = if bs == 1024 {
+        2048
     } else {
-        sb.s_desc_size as u64
+        bs
     };
-    let offset = desc_table_start + desc_size as u64 * bg_num;
+    let offset = desc_table_start + fs.desc_size as u64 * bg_num;
 
     ctx.drive.seek(SeekFrom::Start(offset))?;
     let desc: GroupDescriptor = bincode_opt.deserialize_from(&ctx.drive)?;
@@ -662,9 +748,59 @@ fn fetch_regular_bg_descriptor(bg_num: u64, sb: &SuperBlock, ctx: &mut Context) 
 }
 
 
+// Source: https://github.com/tytso/e2fsprogs/blob/master/lib/ext2fs/csum.c#L716
+/// Verifies the checksum of a group descriptor.
+fn verify_desc_csum(desc: &GroupDescriptor, bg_num: u64, fs: &Fs) -> anyhow::Result<bool>
+{
+    if fs.opts.dyn_cfg.is_none() {
+        bail!("cannot verify checksum: dyn_cfg is None");
+    }
+
+    let mut desc: GroupDescriptor = *desc;
+    let orig_csum = desc.bg_checksum;
+    let mut csum: u32;
+
+    if fs.opts.dyn_cfg.unwrap().ro_compat.has_metadata_csum() {
+        let bincode_opt = DefaultOptions::new()
+            .with_fixint_encoding()
+            .allow_trailing_bytes();
+
+        desc.bg_checksum = 0;
+        let raw_desc = bincode_opt.serialize(&desc)?;
+        desc.bg_checksum = orig_csum;
+
+        let bg_num_raw = [
+            ((bg_num >> 0 ) & 0xff) as u8,
+            ((bg_num >> 8 ) & 0xff) as u8,
+            ((bg_num >> 16) & 0xff) as u8,
+            ((bg_num >> 24) & 0xff) as u8,
+        ];
+
+        csum = ext4_style_crc32c_le(fs.csum_seed.unwrap(), &bg_num_raw);
+        csum = ext4_style_crc32c_le(csum, &raw_desc[..fs.desc_size as usize]);
+    } else if fs.opts.dyn_cfg.unwrap().ro_compat.has_gdt_csum() {
+        // TODO: support for gdt_csum
+        bail!("gdt_csum is not supported");
+
+        #[allow(unreachable_code)]
+        if fs.csum_seed.is_none() {
+            bail!("cannot verify checksum: checksum seed is not initialised");
+        }
+    } else {
+        bail!("cannot verify checksum: neither of metadata_csum and gdt_csum is set");
+    }
+
+    if (csum & 0xffff) as u16 == orig_csum {
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+
 // TODO: make different errors acceptable through the use of cli flags.
 /// Creates FsConfig from a super block and checks it for invalid or unsupported configuration.
-fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsConfig>
+fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsOptions>
 {
     // Constructing enums and flag fields.
 
@@ -749,7 +885,7 @@ fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
         bail!("unknown revision level: {:#010x}", sb.s_rev_level);
     }
 
-    let mut fs_config = FsConfig {
+    let mut fs_opts = FsOptions {
         state,
         error_policy: error_policy.unwrap(),
         fs_creator: fs_creator.unwrap(),
@@ -761,7 +897,7 @@ fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
 
     // --- dynamic revision level only ---
 
-    if let Revision::Dynamic = fs_config.revision {
+    if let Revision::Dynamic = fs_opts.revision {
         if compat.has_unknown() {
             bail!("unknown `s_feature_compat` flags: {:#010x}", compat.0);
         }
@@ -775,8 +911,8 @@ fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
         if incompat.has_unknown() {
             bail!("unknown `s_feature_incompat` flags: {:#010x}", incompat.0);
         }
-        if incompat.has_recover() {
-            bail!("filesystem needs recovery");
+        if incompat.has_recover() && !cfg.ignore_recovery {
+            bail!("filesystem needs recovery: try to unmount and/or run fsck on the file system");
         }
         if incompat.has_journal_dev() {
             bail!("filesystem has an external journaling device");
@@ -795,7 +931,7 @@ fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
         if ro_compat.has_unknown() {
             bail!("unknown `s_feature_ro_compat` flags: {:#010x}", ro_compat.0);
         }
-        if ro_compat.has_readonly() {
+        if ro_compat.has_readonly() && !cfg.ignore_readonly {
             bail!("filesystem is marked as read-only");
         }
         // NOTE: it is unclear what this does.
@@ -806,11 +942,18 @@ fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
         if ro_compat.has_shared_blocks() {
             bail!("filesystem has shared blocks");
         }
+        if ro_compat.has_metadata_csum() && ro_compat.has_gdt_csum() {
+            bail!("gdt_csum and metadata_csum cannot be set at the same time");
+        }
+        // TODO: Add support for GDT_CSUM.
+        if ro_compat.has_gdt_csum() {
+            bail!("unsupported feature: gdt_csum");
+        }
 
-        fs_config.dyn_cfg = Some(DynConfig {
-            compat_f: compat,
-            incompat_f: incompat,
-            ro_compat_f: ro_compat,
+        fs_opts.dyn_cfg = Some(DynConfig {
+            compat,
+            incompat,
+            ro_compat,
         });
     }
 
@@ -827,7 +970,7 @@ fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
         }
         // NOTE: the DISCARD mount option could be of relevance here.
 
-        fs_config.journal_cfg = Some(JournalConfig {
+        fs_opts.journal_cfg = Some(JournalConfig {
             def_hash_ver: def_hash_version.unwrap(),
             def_mount_opts,
         });
@@ -846,7 +989,7 @@ fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
             bail!("exclude bitmaps are corrupted");
         }
 
-        fs_config.bit64_cfg = Some(Bit64Config {
+        fs_opts.bit64_cfg = Some(Bit64Config {
             flags,
             encrypt_algos: None,
         });
@@ -855,30 +998,60 @@ fn get_and_check_fsconfig(sb: &SuperBlock, _cfg: &Config) -> anyhow::Result<FsCo
             let mut algos: [EncryptAlgo; 4] = Default::default();
 
             for (i, algo) in encrypt_algos.iter().enumerate() {
-                if algo.is_none() {
-                    bail!("unknown encryption algorithm in `s_encrypt_algos`[{}]: {:#0x}", i, sb.s_encrypt_algos[i]);
-                } else if let Some(EncryptAlgo::Null) = algo {
-                    bail!("invalid encryption algorithm in `s_encrypt_algos`[{}]", i);
-                } else {
-                    algos[i] = algo.unwrap();
+                match algo {
+                    None => bail!(
+                        "unknown encryption algorithm in `s_encrypt_algos`[{}]: {:#0x}",
+                        i,
+                        sb.s_encrypt_algos[i]
+                    ),
+                    Some(EncryptAlgo::Null) => bail!(
+                        "invalid encryption algorithm in `s_encrypt_algos`[{}]",
+                        i
+                    ),
+                    _ => algos[i] = algo.unwrap(),
                 }
             }
 
-            fs_config.bit64_cfg.as_mut().unwrap().encrypt_algos = Some(algos);
+            fs_opts.bit64_cfg.as_mut().unwrap().encrypt_algos = Some(algos);
         }
     }
 
     // --- End of checking ---
 
-    Ok(fs_config)
+    Ok(fs_opts)
 }
 
 
-/// The file system configuration, after checking all the options.
-/// Contains all the flag fields, enumerations and other computed fields. Does not substitute, but
-/// complements the SuperBlock structure.
+// Source: https://github.com/FauxFaux/ext4-rs/blob/211fa05cd7b1498060b4b68ffed368d8d3c3b788/src/parse.rs
+/// Ext4-style crc32c algorithm.
+pub fn ext4_style_crc32c_le(seed: u32, buf: &[u8]) -> u32
+{
+    crc::crc32::update(seed ^ (!0), &crc::crc32::CASTAGNOLI_TABLE, buf) ^ (!0u32)
+}
+
+
+/// Filesystem parameters.
+/// This structure contains all the relevant information about the filesystem. This includes
+/// important structures and decoded values.
 #[derive(Copy, Clone, Debug)]
-struct FsConfig {
+struct Fs {
+    sb: SuperBlock,
+    opts: FsOptions,
+    // -- computed values --
+    blocks_count: u64,
+    bg_count: u64,
+    bg_size: u64,
+    desc_size: u64,
+    inode_size: u64,
+    csum_seed: Option<u32>,
+}
+
+
+/// Decoded file system flag fields and enumerations; after validating all the options.
+/// Contains all the flag fields and enumerations. Does not substitute, but complements the
+/// SuperBlock structure.
+#[derive(Copy, Clone, Debug)]
+struct FsOptions {
     state: State,
     error_policy: ErrorPolicy,
     fs_creator: FsCreator,
@@ -892,9 +1065,9 @@ struct FsConfig {
 /// Dynamic revision configuration.
 #[derive(Copy, Clone, Debug)]
 struct DynConfig {
-    compat_f: CompatFeatures,
-    incompat_f: IncompatFeatures,
-    ro_compat_f: RoCompatFeatures,
+    compat: CompatFeatures,
+    incompat: IncompatFeatures,
+    ro_compat: RoCompatFeatures,
 }
 
 
