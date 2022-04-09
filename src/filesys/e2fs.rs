@@ -21,6 +21,32 @@ macro_rules! bs {
 }
 
 
+/// The size of a group descriptor for buffer allocation.
+/// The larger one is picked to avoid de/serialisation problems.
+macro_rules! alloc_desc_size {
+    ($size:expr) => {
+        if $size as usize > GROUP_DESC_STRUCT_SIZE {
+            $size as usize
+        } else {
+            GROUP_DESC_STRUCT_SIZE
+        }
+    };
+}
+
+
+/// The size of an inode for buffer allocation.
+/// The larger one is picked to avoid de/serialisation problems.
+macro_rules! alloc_inode_size {
+    ($size:expr) => {
+        if $size as usize > INODE_STRUCT_SIZE {
+            $size as usize
+        } else {
+            INODE_STRUCT_SIZE
+        }
+    };
+}
+
+
 /// The Ext2/3/4 Superblock structure.
 /// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -175,13 +201,86 @@ struct GroupDescriptor {
 }
 
 
+const GROUP_DESC_STRUCT_SIZE: usize = 64;
+
+
+/// Ext4 inode.
+/// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct Inode {
+    i_mode:         u16,             /* File mode */
+    i_uid:          u16,             /* Low 16 bits of Owner Uid */
+    i_size_lo:      u32,             /* Size in bytes */
+    i_atime:        u32,             /* Access time */
+    i_ctime:        u32,             /* Inode Change time */
+    i_mtime:        u32,             /* Modification time */
+    i_dtime:        u32,             /* Deletion Time */
+    i_gid:          u16,             /* Low 16 bits of Group Id */
+    i_links_count:  u16,             /* Links count */
+    i_blocks_lo:    u32,             /* Blocks count */
+    i_flags:        u32,             /* File flags */
+    osd1:           u32,             /* OS dependent 1 */
+    i_block:        [u32; N_BLOCKS], /* Pointers to blocks */
+    i_generation:   u32,             /* File version (for NFS) */
+    i_file_acl_lo:  u32,             /* File ACL */
+    i_size_high:    u32,
+    i_obso_faddr:   u32,             /* Obsoleted fragment address */
+    osd2:           [u8; 12],        /* OS dependent 2 */
+    i_extra_isize:  u16,
+    i_checksum_hi:  u16,             /* crc32c(uuid+inum+inode) BE */
+    i_ctime_extra:  u32,             /* extra Change time      (nsec << 2 | epoch) */
+    i_mtime_extra:  u32,             /* extra Modification time(nsec << 2 | epoch) */
+    i_atime_extra:  u32,             /* extra Access time      (nsec << 2 | epoch) */
+    i_crtime:       u32,             /* File Creation time */
+    i_crtime_extra: u32,             /* extra FileCreationtime (nsec << 2 | epoch) */
+    i_version_hi:   u32,             /* high 32 bits for 64-bit version */
+    i_projid:       u32,             /* Project ID */
+}
+
+
+const INODE_STRUCT_SIZE: usize = 160;
+
+
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct Osd2Linux {
+    l_i_blocks_high:   u16, /* were l_i_reserved1 */
+    l_i_file_acl_high: u16,
+    l_i_uid_high:      u16, /* these 2 fields */
+    l_i_gid_high:      u16, /* were reserved2[0] */
+    l_i_checksum_lo:   u16, /* crc32c(uuid+inum+inode) LE */
+    l_i_reserved:      u16,
+}
+
+
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct Osd2Hurd {
+    h_i_reserved1: u16, /* Obsoleted fragment number/size which are removed in ext4 */
+    h_i_mode_high: u16,
+    h_i_uid_high:  u16,
+    h_i_gid_high:  u16,
+    h_i_author:    u32,
+}
+
+
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct Osd2Masix {
+    h_i_reserved1:     u16,      /* Obsoleted fragment number/size which are removed in ext4 */
+    m_i_file_acl_high: u16,
+    m_i_reserved2:     [u32; 2],
+}
+
+
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 
-const GOOD_OLD_INODE_SIZE: u16 = 128;
-const MIN_DESC_SIZE:       u16 = 32;
+const GOOD_OLD_INODE_SIZE: u16   = 128;
+const MIN_DESC_SIZE:       u16   = 32;
+const N_BLOCKS:            usize = 15;
 
 
-// NOTE: Debug is derived.
+// FIXME: Debug is derived.
 #[derive(Copy, Clone, Debug)]
 struct BgFlags(u16);
 
@@ -499,8 +598,19 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
         None
     };
 
+    let mut desc_table = vec![
+        u8::default();
+        bg_count as usize * alloc_desc_size!(desc_size)
+    ];
+    ctx.drive.seek(SeekFrom::Start(start_of_gdt(&sb)))?;
+    // FIXME: This could fail if the descriptor is smaller than GROUP_DESC_STRUCT_SIZE and it is
+    // located at the end of the disk. The read operation would then attempt to reach beyond the
+    // end of the disk.
+    ctx.drive.read_exact(desc_table.as_mut_slice())?;
+
     let fs = Fs {
         sb,
+        desc_table,
         opts,
         blocks_count,
         bg_count,
@@ -513,7 +623,7 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
     println!("{:#?}", &fs);
 
     for i in 0..bg_count {
-        let desc = fetch_regular_bg_descriptor(i, &fs, ctx)?;
+        let desc = fetch_regular_bg_descriptor(i, &fs)?;
         print!("{:04}: ", i);
         println!("{:#?}", &desc);
         if desc.bg_flags & 4 == 0 {
@@ -552,7 +662,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
     ctx.logger.log(2, &format!("processing block group {:010}", bg_num));
 
     let block_size = bs!(fs.sb.s_log_block_size);
-    let bg_start = fs.sb.s_first_data_block as u64 * block_size + bg_num * fs.bg_size;
+    let bg_start = start_of_bg(bg_num, fs);
     let mut skip_super = false;
     let has_csum = match fs.opts.dyn_cfg {
         Some(dyn_cfg) => dyn_cfg.ro_compat.has_metadata_csum() || dyn_cfg.ro_compat.has_gdt_csum(),
@@ -579,24 +689,20 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
     }
 
     if !skip_super {
-        let gdt_table_start: u64;
+        let gdt_start: u64;
 
         // The superblock.
         if bg_num == 0 {
             // The empty space at the beginning of the drive and the superblock.
             map.update(0, 2048, AllocStatus::Used);
             // NOTE: s_first_data_block > 1 is not accounted for.
-            gdt_table_start = if block_size == 1024 {
-                2048
-            } else {
-                block_size
-            };
+            gdt_start = start_of_gdt(&fs.sb);
         } else {
             map.update(bg_start, 1024, AllocStatus::Used);
-            gdt_table_start = bg_start + block_size;
+            gdt_start = bg_start + block_size;
         }
 
-        println!("gdt table: {}", gdt_table_start); // [debug]
+        println!("gdt table: {}", gdt_start); // [debug]
 
         // The group descriptors.
         if has_csum {
@@ -604,18 +710,24 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
                 .with_fixint_encoding()
                 .allow_trailing_bytes();
 
-            let mut gdt_table = vec![u8::default(); fs.bg_count as usize * fs.desc_size as usize];
-            ctx.drive.seek(SeekFrom::Start(gdt_table_start))?;
-            ctx.drive.read_exact(gdt_table.as_mut_slice())?;
+            let mut gdt = vec![
+                u8::default();
+                fs.bg_count as usize * alloc_desc_size!(fs.desc_size)
+            ];
+            ctx.drive.seek(SeekFrom::Start(gdt_start))?;
+            // FIXME: This could fail if the descriptor is smaller than GROUP_DESC_STRUCT_SIZE and
+            // it is located at the end of the disk. The read operation would then attempt to reach
+            // beyond the end of the disk.
+            ctx.drive.read_exact(gdt.as_mut_slice())?;
 
             for i in 0..fs.bg_count {
                 let desc: GroupDescriptor = bincode_opt.deserialize(
-                    &gdt_table[(i * fs.desc_size) as usize..]
+                    &gdt[(i * fs.desc_size) as usize..]
                 )?;
 
                 if verify_desc_csum(&desc, i, fs)? {
                     map.update(
-                        gdt_table_start + (i * fs.desc_size),
+                        gdt_start + (i * fs.desc_size),
                         fs.desc_size,
                         AllocStatus::Used
                     );
@@ -627,11 +739,11 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
         } else {
             // Without checksumming, the whole descriptor table must be initialised.
             let gdt_size = fs.bg_count * fs.desc_size;
-            map.update(gdt_table_start, gdt_size, AllocStatus::Used);
+            map.update(gdt_start, gdt_size, AllocStatus::Used);
         }
     }
 
-    let desc = fetch_regular_bg_descriptor(bg_num, fs, ctx)?;
+    let desc = fetch_regular_bg_descriptor(bg_num, fs)?;
 
     if has_csum {
         if !verify_desc_csum(&desc, bg_num, fs)? {
@@ -727,24 +839,47 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
 /// Fetches a block group descriptor, based on the number of the block group.
 /// Descriptors are read from the first block group. This procedure assumes that the standard
 /// layout (not META_BG) is used.
-fn fetch_regular_bg_descriptor(bg_num: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<GroupDescriptor>
+fn fetch_regular_bg_descriptor(bg_num: u64, fs: &Fs) -> anyhow::Result<GroupDescriptor>
 {
     let bincode_opt = DefaultOptions::new()
         .with_fixint_encoding()
         .allow_trailing_bytes();
 
-    let bs = bs!(fs.sb.s_log_block_size);
-    let desc_table_start = if bs == 1024 {
-        2048
-    } else {
-        bs
-    };
-    let offset = desc_table_start + fs.desc_size as u64 * bg_num;
-
-    ctx.drive.seek(SeekFrom::Start(offset))?;
-    let desc: GroupDescriptor = bincode_opt.deserialize_from(&ctx.drive)?;
+    let desc: GroupDescriptor = bincode_opt.deserialize(
+        &fs.desc_table[(bg_num * fs.desc_size) as usize..]
+    )?;
 
     Ok(desc)
+}
+
+
+/// Fetches an inode, based on the number of the inode.
+fn fetch_inode(inum: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<Inode>
+{
+    let bincode_opt = DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes();
+
+    let bg_num = (inum - 1) / fs.sb.s_inodes_per_group as u64;
+    let idx = (inum - 1) % fs.sb.s_inodes_per_group as u64;
+    let desc = fetch_regular_bg_descriptor(bg_num, fs)?;
+    let inode_table_block = if fs.opts.bit64_cfg.is_some() {
+        hilo!(desc.bg_inode_table_hi, desc.bg_inode_table_lo)
+    } else {
+        desc.bg_inode_table_lo as u64
+    };
+    let offset = inode_table_block * bs!(fs.sb.s_log_block_size) + idx * fs.inode_size;
+
+    let mut buf = vec![u8::default(); alloc_inode_size!(fs.inode_size)];
+    ctx.drive.seek(SeekFrom::Start(offset))?;
+    // FIXME: This could fail if the inode is smaller than INODE_STRUCT_SIZE and it is located at
+    // the end of the disk. The read operation would then attempt to reach beyond the end of the
+    // disk.
+    ctx.drive.read_exact(buf.as_mut_slice())?;
+
+    let inode: Inode = bincode_opt.deserialize(buf.as_mut_slice())?;
+
+    Ok(inode)
 }
 
 
@@ -798,7 +933,6 @@ fn verify_desc_csum(desc: &GroupDescriptor, bg_num: u64, fs: &Fs) -> anyhow::Res
 }
 
 
-// TODO: make different errors acceptable through the use of cli flags.
 /// Creates FsConfig from a super block and checks it for invalid or unsupported configuration.
 fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsOptions>
 {
@@ -867,15 +1001,11 @@ fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsO
     }
 
     // NOTE: `s_errors` is not that important.
-
     if error_policy.is_none() {
         bail!("unknown error policy: {:#0x}", sb.s_errors);
-    } else if let ErrorPolicy::Null = error_policy.unwrap() {
+    } else if let Some(ErrorPolicy::Null) = error_policy {
         bail!("invalid error policy: {:#0x}", sb.s_errors);
     }
-
-    // NOTE: checking the creator operating system probably is not needed, unless advanced inode
-    // processing is done.
 
     if fs_creator.is_none() {
         bail!("unknown creator operating system: {:#0x}", sb.s_creator_os);
@@ -960,15 +1090,15 @@ fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsO
     // --- journalling support only ---
 
     if compat.has_has_journal() {
+        // NOTE: unclear whether siphash should be legal here.
         if def_hash_version.is_none() {
             bail!("unknown default hash version: {:#0x}", sb.s_def_hash_version)
         }
-        // NOTE: unclear whether siphash should be legal here.
 
+        // NOTE: the DISCARD mount option could be of relevance here.
         if def_mount_opts.has_unknown() {
             bail!("unknown `s_default_mount_opts` flags: {:#010x}", def_mount_opts.0);
         }
-        // NOTE: the DISCARD mount option could be of relevance here.
 
         fs_opts.journal_cfg = Some(JournalConfig {
             def_hash_ver: def_hash_version.unwrap(),
@@ -1030,12 +1160,29 @@ pub fn ext4_style_crc32c_le(seed: u32, buf: &[u8]) -> u32
 }
 
 
+fn start_of_bg(bg_num: u64, fs: &Fs) -> u64
+{
+    fs.sb.s_first_data_block as u64 * bs!(fs.sb.s_log_block_size) + bg_num * fs.bg_size
+}
+
+
+fn start_of_gdt(sb: &SuperBlock) -> u64
+{
+    if bs!(sb.s_log_block_size) == 1024 {
+        2048
+    } else {
+        bs!(sb.s_log_block_size)
+    }
+}
+
+
 /// Filesystem parameters.
 /// This structure contains all the relevant information about the filesystem. This includes
 /// important structures and decoded values.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 struct Fs {
     sb: SuperBlock,
+    desc_table: Vec<u8>,
     opts: FsOptions,
     // -- computed values --
     blocks_count: u64,
