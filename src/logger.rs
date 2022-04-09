@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::fs::File;
 
+use crate::Config;
+
 
 /// A simple logger.
 #[derive(Debug)]
@@ -11,10 +13,10 @@ pub struct Logger {
 
 impl Logger {
     /// Create a new logger.
-    pub fn new(verbosity: u32, log_file: Option<File>) -> Self
+    pub fn new(log_file: Option<File>, cfg: &Config) -> Self
     {
         Self {
-            verbosity,
+            verbosity: cfg.verbosity,
             log_file,
         }
     }
@@ -28,7 +30,7 @@ impl Logger {
 
             if let Some(log_file) = &mut self.log_file {
                 write!(log_file, "{}", msg).unwrap_or_else(|_| {
-                    eprintln!("error: couldn't write into the log file")
+                    eprintln!("couldn't write into the log file");
                 });
             }
         }

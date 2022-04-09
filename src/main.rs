@@ -66,6 +66,7 @@ fn main()
     let args = Args::parse();
 
     let mut cfg = Config::default();
+    cfg.cmd_name = std::env::args().nth(0).unwrap();
     cfg.drive_path = args.drive;
     cfg.report_only = args.report_only;
     cfg.verbosity = args.verbose;
@@ -91,7 +92,7 @@ fn main()
         log_file = match f {
             Ok(f) => Some(f),
             Err(e) => {
-                eprintln!("error: {}: {}", &path.display(), &e);
+                eprintln!("{}: {}: {}", cfg.cmd_name, &path.display(), &e);
                 cfg.log_file_path = None;
                 None
             }
@@ -109,14 +110,14 @@ fn main()
     let drive = match drive {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("error: {}: {}", &cfg.drive_path.display(), &e);
+            eprintln!("{}: {}: {}", cfg.cmd_name, &cfg.drive_path.display(), &e);
             return;
         }
     };
 
     let mut context = Context {
         drive,
-        logger: Logger::new(cfg.verbosity, log_file),
+        logger: Logger::new(log_file, &cfg),
     };
 
     // Set or detect the FS type.
@@ -145,7 +146,7 @@ fn main()
         FsType::Ext4 => filesys::e2fs::process_drive(&mut context, &cfg),
         _ => Err(anyhow!("this filesystem is not implemented yet")),
     } {
-        eprintln!("error: {}", &e);
+        eprintln!("{}: {}", cfg.cmd_name, &e);
         return;
     };
 }
@@ -154,6 +155,7 @@ fn main()
 /// Contains configuration options.
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub cmd_name: String,
     pub fs_type: FsType,
     pub drive_path: PathBuf,
     pub log_file_path: Option<PathBuf>,
@@ -168,6 +170,7 @@ impl Default for Config {
     fn default() -> Self
     {
         Self {
+            cmd_name: String::from("zbfill"),
             fs_type: FsType::Ext4,
             drive_path: PathBuf::default(),
             log_file_path: None,
