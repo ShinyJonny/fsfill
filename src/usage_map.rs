@@ -2,7 +2,7 @@ use std::ops::{Index, IndexMut};
 use std::slice::SliceIndex;
 
 #[derive(Clone, Debug)]
-pub struct UsageMap(Vec<Extent>);
+pub struct UsageMap(pub Vec<Segment>);
 
 impl UsageMap {
     pub fn new(len: u64) -> Self
@@ -11,7 +11,7 @@ impl UsageMap {
 
         Self {
             0: vec![
-                Extent {
+                Segment {
                     start: 0,
                     end: len,
                     status: AllocStatus::Free,
@@ -42,10 +42,10 @@ impl UsageMap {
 
         assert!(start <= map_size);
 
-        self.add_extent(Extent { start, end, status });
+        self.add_segment(Segment { start, end, status });
     }
 
-    pub fn add_extent(&mut self, new: Extent)
+    pub fn add_segment(&mut self, new: Segment)
     {
         let vector = &self.0;
 
@@ -53,7 +53,7 @@ impl UsageMap {
         assert!(new.start < new.end);
         assert!(new.end <= vector.iter().last().unwrap().end);
 
-        // Get the indices of the nodes within which the new extent's start and end are.
+        // Get the indices of the nodes within which the new segment's start and end are.
 
         let start_i = vector.iter().position(|e| {
             new.start >= e.start && new.start < e.end
@@ -64,13 +64,13 @@ impl UsageMap {
 
         let vector = &mut self.0;
 
-        // Delete all the extents in-between the start and end extents.
+        // Delete all the segments in-between the start and end segments.
 
         for _ in (start_i + 1)..end_i {
             vector.remove(start_i + 1);
         }
 
-        // If the start and the end are in one extent, duplicate the extent for consistency.
+        // If the start and the end are in one segment, duplicate the segment for consistency.
         if start_i == end_i {
             vector.insert(start_i + 1, vector[start_i]);
         }
@@ -133,10 +133,18 @@ impl UsageMap {
 
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Extent {
+pub struct Segment {
     pub start: u64,
     pub end: u64,
     pub status: AllocStatus,
+}
+
+
+impl Segment {
+    pub fn size(&self) -> usize
+    {
+        (self.end - self.start) as usize
+    }
 }
 
 
@@ -151,8 +159,8 @@ pub enum AllocStatus {
 
 
 impl<'a> IntoIterator for UsageMap {
-    type Item = Extent;
-    type IntoIter = <Vec<Extent> as IntoIterator>::IntoIter;
+    type Item = Segment;
+    type IntoIter = <Vec<Segment> as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter
     {
@@ -161,8 +169,8 @@ impl<'a> IntoIterator for UsageMap {
 }
 
 impl<'a> IntoIterator for &'a UsageMap {
-    type Item = &'a Extent;
-    type IntoIter = <&'a Vec<Extent> as IntoIterator>::IntoIter;
+    type Item = &'a Segment;
+    type IntoIter = <&'a Vec<Segment> as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter
     {
@@ -171,8 +179,8 @@ impl<'a> IntoIterator for &'a UsageMap {
 }
 
 impl<'a> IntoIterator for &'a mut UsageMap {
-    type Item = &'a mut Extent;
-    type IntoIter = <&'a mut Vec<Extent> as IntoIterator>::IntoIter;
+    type Item = &'a mut Segment;
+    type IntoIter = <&'a mut Vec<Segment> as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter
     {
@@ -182,7 +190,7 @@ impl<'a> IntoIterator for &'a mut UsageMap {
 
 impl<I> Index<I> for UsageMap
 where
-    I: SliceIndex<[Extent]>
+    I: SliceIndex<[Segment]>
 {
     type Output = I::Output;
 
@@ -194,7 +202,7 @@ where
 
 impl<I> IndexMut<I> for UsageMap
 where
-    I: SliceIndex<[Extent]>
+    I: SliceIndex<[Segment]>
 {
     fn index_mut(&mut self, index: I) -> &mut Self::Output
     {
@@ -208,7 +216,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{AllocStatus, UsageMap, Extent};
+    use super::{AllocStatus, UsageMap, Segment};
 
     mod usage_map {
         use super::*;
@@ -227,7 +235,7 @@ mod tests {
         {
             let map = UsageMap::new(5);
 
-            assert_eq!(map[0], Extent { start: 0, end: 5, status: AllocStatus::Free });
+            assert_eq!(map[0], Segment { start: 0, end: 5, status: AllocStatus::Free });
         }
 
         #[test]
@@ -249,18 +257,18 @@ mod tests {
         fn len_2()
         {
             let mut map = UsageMap::new(5);
-            map.add_extent(Extent { start: 2, end: 5, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 2, end: 5, status: AllocStatus::Used });
 
             assert_eq!(map.len(), 2);
         }
 
         #[test]
-        fn add_extent_start_eq_end()
+        fn add_segment_start_eq_end()
         {
             let mut map = UsageMap::new(5);
             let orig_e = map[0];
 
-            map.add_extent(Extent { start: 1, end: 1, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 1, end: 1, status: AllocStatus::Used });
 
             assert_eq!(map.len(), 1);
             assert_eq!(map[0], orig_e);
@@ -268,39 +276,39 @@ mod tests {
 
         #[test]
         #[should_panic]
-        fn add_extent_start_gt_end()
+        fn add_segment_start_gt_end()
         {
             let mut map = UsageMap::new(5);
-            map.add_extent(Extent { start: 3, end: 1, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 3, end: 1, status: AllocStatus::Used });
         }
 
         #[test]
         #[should_panic]
-        fn add_extent_end_out_of_bounds()
+        fn add_segment_end_out_of_bounds()
         {
             let mut map = UsageMap::new(5);
-            map.add_extent(Extent { start: 0, end: 6, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 0, end: 6, status: AllocStatus::Used });
         }
 
         #[test]
-        fn add_extent_inside_one_different_status()
+        fn add_segment_inside_one_different_status()
         {
             let mut map = UsageMap::new(20);
-            let new_extent = Extent { start: 2, end: 11, status: AllocStatus::Used };
-            map.add_extent(new_extent);
+            let new_segment = Segment { start: 2, end: 11, status: AllocStatus::Used };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 3);
-            assert_eq!(map[0], Extent { start: 0, end: 2, status: AllocStatus::Free });
-            assert_eq!(map[1], new_extent);
-            assert_eq!(map[2], Extent { start: 11, end: 20, status: AllocStatus::Free });
+            assert_eq!(map[0], Segment { start: 0, end: 2, status: AllocStatus::Free });
+            assert_eq!(map[1], new_segment);
+            assert_eq!(map[2], Segment { start: 11, end: 20, status: AllocStatus::Free });
         }
 
         #[test]
-        fn add_extent_inside_one_same_status()
+        fn add_segment_inside_one_same_status()
         {
             let mut map = UsageMap::new(20);
-            let new_extent = Extent { start: 2, end: 11, status: AllocStatus::Free };
-            map.add_extent(new_extent);
+            let new_segment = Segment { start: 2, end: 11, status: AllocStatus::Free };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 1);
             assert_eq!(map[0].start, 0);
@@ -309,12 +317,12 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_inside_two_different_first_same()
+        fn add_segment_inside_two_different_first_same()
         {
             let mut map = UsageMap::new(20);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            let new_extent = Extent { start: 3, end: 11, status: AllocStatus::Free };
-            map.add_extent(new_extent);
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            let new_segment = Segment { start: 3, end: 11, status: AllocStatus::Free };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 2);
             assert_eq!(map[0].start, 0);
@@ -326,12 +334,12 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_inside_two_different_second_same()
+        fn add_segment_inside_two_different_second_same()
         {
             let mut map = UsageMap::new(20);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            let new_extent = Extent { start: 5, end: 16, status: AllocStatus::Used };
-            map.add_extent(new_extent);
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            let new_segment = Segment { start: 5, end: 16, status: AllocStatus::Used };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 2);
             assert_eq!(map[0].start, 0);
@@ -343,13 +351,13 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_add_a_bunch()
+        fn add_segment_add_a_bunch()
         {
             let mut map = UsageMap::new(100);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 30, end: 40, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 40, end: 50, status: AllocStatus::Free });
-            map.add_extent(Extent { start: 50, end: 60, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 30, end: 40, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 40, end: 50, status: AllocStatus::Free });
+            map.add_segment(Segment { start: 50, end: 60, status: AllocStatus::Used });
 
             assert_eq!(map.len(), 7);
 
@@ -379,15 +387,15 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_span_first_status_same()
+        fn add_segment_span_first_status_same()
         {
             let mut map = UsageMap::new(100);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 30, end: 40, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 40, end: 50, status: AllocStatus::Free });
-            map.add_extent(Extent { start: 50, end: 60, status: AllocStatus::Used });
-            let new_extent = Extent { start: 15, end: 45, status: AllocStatus::Used };
-            map.add_extent(new_extent);
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 30, end: 40, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 40, end: 50, status: AllocStatus::Free });
+            map.add_segment(Segment { start: 50, end: 60, status: AllocStatus::Used });
+            let new_segment = Segment { start: 15, end: 45, status: AllocStatus::Used };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 5);
 
@@ -411,15 +419,15 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_span_last_status_same()
+        fn add_segment_span_last_status_same()
         {
             let mut map = UsageMap::new(100);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 30, end: 40, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 40, end: 50, status: AllocStatus::Free });
-            map.add_extent(Extent { start: 50, end: 60, status: AllocStatus::Used });
-            let new_extent = Extent { start: 15, end: 45, status: AllocStatus::Free };
-            map.add_extent(new_extent);
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 30, end: 40, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 40, end: 50, status: AllocStatus::Free });
+            map.add_segment(Segment { start: 50, end: 60, status: AllocStatus::Used });
+            let new_segment = Segment { start: 15, end: 45, status: AllocStatus::Free };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 5);
 
@@ -443,13 +451,13 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_starts_at_boundary_same()
+        fn add_segment_starts_at_boundary_same()
         {
             let mut map = UsageMap::new(40);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 30, end: 40, status: AllocStatus::Used });
-            let new_extent = Extent { start: 10, end: 25, status: AllocStatus::Used };
-            map.add_extent(new_extent);
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 30, end: 40, status: AllocStatus::Used });
+            let new_segment = Segment { start: 10, end: 25, status: AllocStatus::Used };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 4);
 
@@ -470,13 +478,13 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_starts_at_boundary_different()
+        fn add_segment_starts_at_boundary_different()
         {
             let mut map = UsageMap::new(40);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 30, end: 40, status: AllocStatus::Used });
-            let new_extent = Extent { start: 10, end: 25, status: AllocStatus::Free };
-            map.add_extent(new_extent);
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 30, end: 40, status: AllocStatus::Used });
+            let new_segment = Segment { start: 10, end: 25, status: AllocStatus::Free };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 2);
 
@@ -491,13 +499,13 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_ends_at_boundary_same()
+        fn add_segment_ends_at_boundary_same()
         {
             let mut map = UsageMap::new(40);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 30, end: 40, status: AllocStatus::Used });
-            let new_extent = Extent { start: 15, end: 30, status: AllocStatus::Free };
-            map.add_extent(new_extent);
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 30, end: 40, status: AllocStatus::Used });
+            let new_segment = Segment { start: 15, end: 30, status: AllocStatus::Free };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 4);
 
@@ -518,13 +526,13 @@ mod tests {
         }
 
         #[test]
-        fn add_extent_ends_at_boundary_different()
+        fn add_segment_ends_at_boundary_different()
         {
             let mut map = UsageMap::new(40);
-            map.add_extent(Extent { start: 10, end: 20, status: AllocStatus::Used });
-            map.add_extent(Extent { start: 30, end: 40, status: AllocStatus::Used });
-            let new_extent = Extent { start: 15, end: 30, status: AllocStatus::Used };
-            map.add_extent(new_extent);
+            map.add_segment(Segment { start: 10, end: 20, status: AllocStatus::Used });
+            map.add_segment(Segment { start: 30, end: 40, status: AllocStatus::Used });
+            let new_segment = Segment { start: 15, end: 30, status: AllocStatus::Used };
+            map.add_segment(new_segment);
 
             assert_eq!(map.len(), 2);
 
@@ -540,47 +548,47 @@ mod tests {
     }
 
 
-    mod extent {
+    mod segment {
         use super::*;
 
         #[test]
         fn eq()
         {
-            let e1 = Extent { start: 0, end: 0, status: AllocStatus::Free};
-            assert_eq!(e1, Extent { start: 0, end: 0, status: AllocStatus::Free});
+            let e1 = Segment { start: 0, end: 0, status: AllocStatus::Free};
+            assert_eq!(e1, Segment { start: 0, end: 0, status: AllocStatus::Free});
 
-            let e1 = Extent { start: 10, end: 0, status: AllocStatus::Free};
-            assert_eq!(e1, Extent { start: 10, end: 0, status: AllocStatus::Free});
+            let e1 = Segment { start: 10, end: 0, status: AllocStatus::Free};
+            assert_eq!(e1, Segment { start: 10, end: 0, status: AllocStatus::Free});
 
-            let e1 = Extent { start: 3, end: 20, status: AllocStatus::Free};
-            assert_eq!(e1, Extent { start: 3, end: 20, status: AllocStatus::Free});
+            let e1 = Segment { start: 3, end: 20, status: AllocStatus::Free};
+            assert_eq!(e1, Segment { start: 3, end: 20, status: AllocStatus::Free});
 
-            let e1 = Extent { start: 55, end: 300, status: AllocStatus::Used};
-            assert_eq!(e1, Extent { start: 55, end: 300, status: AllocStatus::Used});
+            let e1 = Segment { start: 55, end: 300, status: AllocStatus::Used};
+            assert_eq!(e1, Segment { start: 55, end: 300, status: AllocStatus::Used});
         }
 
         #[test]
         #[should_panic]
         fn start_not_eq()
         {
-            let e1 = Extent { start: 1, end: 0, status: AllocStatus::Free};
-            assert_eq!(e1, Extent { start: 0, end: 0, status: AllocStatus::Free});
+            let e1 = Segment { start: 1, end: 0, status: AllocStatus::Free};
+            assert_eq!(e1, Segment { start: 0, end: 0, status: AllocStatus::Free});
         }
 
         #[test]
         #[should_panic]
         fn end_not_eq()
         {
-            let e1 = Extent { start: 0, end: 1, status: AllocStatus::Free};
-            assert_eq!(e1, Extent { start: 0, end: 0, status: AllocStatus::Free});
+            let e1 = Segment { start: 0, end: 1, status: AllocStatus::Free};
+            assert_eq!(e1, Segment { start: 0, end: 0, status: AllocStatus::Free});
         }
 
         #[test]
         #[should_panic]
         fn status_not_eq()
         {
-            let e1 = Extent { start: 0, end: 0, status: AllocStatus::Used};
-            assert_eq!(e1, Extent { start: 0, end: 0, status: AllocStatus::Free});
+            let e1 = Segment { start: 0, end: 0, status: AllocStatus::Used};
+            assert_eq!(e1, Segment { start: 0, end: 0, status: AllocStatus::Free});
         }
     }
 

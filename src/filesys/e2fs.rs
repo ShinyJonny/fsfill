@@ -1,15 +1,15 @@
 #![allow(dead_code)]
-use std::io::{Seek, SeekFrom, Read};
-use serde::{Serialize, Deserialize};
-use bincode::{Options, DefaultOptions};
 use anyhow::bail;
+use bincode::{DefaultOptions, Options};
+use serde::{Deserialize, Serialize};
+use std::io::{Read, Seek, SeekFrom};
 
-use crate::{Context, Config};
 use crate::array::Array;
-use crate::usage_map::{UsageMap, AllocStatus};
+use crate::bitmap::Bitmap;
 use crate::fill;
 use crate::hilo;
-use crate::bitmap::Bitmap;
+use crate::usage_map::{AllocStatus, UsageMap};
+use crate::{Config, Context};
 
 
 /// Computes the block size from `s_log_block_size`.
@@ -208,33 +208,33 @@ const GROUP_DESC_STRUCT_SIZE: usize = 64;
 /// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Inode {
-    i_mode:         u16,             /* File mode */
-    i_uid:          u16,             /* Low 16 bits of Owner Uid */
-    i_size_lo:      u32,             /* Size in bytes */
-    i_atime:        u32,             /* Access time */
-    i_ctime:        u32,             /* Inode Change time */
-    i_mtime:        u32,             /* Modification time */
-    i_dtime:        u32,             /* Deletion Time */
-    i_gid:          u16,             /* Low 16 bits of Group Id */
-    i_links_count:  u16,             /* Links count */
-    i_blocks_lo:    u32,             /* Blocks count */
-    i_flags:        u32,             /* File flags */
-    osd1:           u32,             /* OS dependent 1 */
-    i_block:        [u32; N_BLOCKS], /* Pointers to blocks */
-    i_generation:   u32,             /* File version (for NFS) */
-    i_file_acl_lo:  u32,             /* File ACL */
-    i_size_high:    u32,
-    i_obso_faddr:   u32,             /* Obsoleted fragment address */
-    osd2:           [u8; 12],        /* OS dependent 2 */
-    i_extra_isize:  u16,
-    i_checksum_hi:  u16,             /* crc32c(uuid+inum+inode) BE */
-    i_ctime_extra:  u32,             /* extra Change time      (nsec << 2 | epoch) */
-    i_mtime_extra:  u32,             /* extra Modification time(nsec << 2 | epoch) */
-    i_atime_extra:  u32,             /* extra Access time      (nsec << 2 | epoch) */
-    i_crtime:       u32,             /* File Creation time */
-    i_crtime_extra: u32,             /* extra FileCreationtime (nsec << 2 | epoch) */
-    i_version_hi:   u32,             /* high 32 bits for 64-bit version */
-    i_projid:       u32,             /* Project ID */
+    pub i_mode:         u16,             // File mode
+    pub i_uid:          u16,             // Low 16 bits of Owner Uid
+    pub i_size_lo:      u32,             // Size in bytes
+    pub i_atime:        u32,             // Access time
+    pub i_ctime:        u32,             // Inode Change time
+    pub i_mtime:        u32,             // Modification time
+    pub i_dtime:        u32,             // Deletion Time
+    pub i_gid:          u16,             // Low 16 bits of Group Id
+    pub i_links_count:  u16,             // Links count
+    pub i_blocks_lo:    u32,             // Blocks count
+    pub i_flags:        u32,             // File flags
+    pub osd1:           u32,             // OS dependent 1
+    pub i_block:        [u32; N_BLOCKS], // Pointers to blocks
+    pub i_generation:   u32,             // File version (for NFS)
+    pub i_file_acl_lo:  u32,             // File ACL
+    pub i_size_high:    u32,
+    pub i_obso_faddr:   u32,             // Obsoleted fragment address
+    pub osd2:           [u8; 12],        // OS dependent 2
+    pub i_extra_isize:  u16,
+    pub i_checksum_hi:  u16,             // crc32c(uuid+inum+inode) BE
+    pub i_ctime_extra:  u32,             // extra Change time      (nsec << 2 | epoch)
+    pub i_mtime_extra:  u32,             // extra Modification time(nsec << 2 | epoch)
+    pub i_atime_extra:  u32,             // extra Access time      (nsec << 2 | epoch)
+    pub i_crtime:       u32,             // File Creation time
+    pub i_crtime_extra: u32,             // extra FileCreationtime (nsec << 2 | epoch)
+    pub i_version_hi:   u32,             // high 32 bits for 64-bit version
+    pub i_projid:       u32,             // Project ID
 }
 
 
@@ -244,43 +244,43 @@ const INODE_STRUCT_SIZE: usize = 160;
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Osd2Linux {
-    l_i_blocks_high:   u16, /* were l_i_reserved1 */
-    l_i_file_acl_high: u16,
-    l_i_uid_high:      u16, /* these 2 fields */
-    l_i_gid_high:      u16, /* were reserved2[0] */
-    l_i_checksum_lo:   u16, /* crc32c(uuid+inum+inode) LE */
-    l_i_reserved:      u16,
+    pub l_i_blocks_high:   u16, // were l_i_reserved1
+    pub l_i_file_acl_high: u16,
+    pub l_i_uid_high:      u16, // these 2 fields
+    pub l_i_gid_high:      u16, // were reserved2[0]
+    pub l_i_checksum_lo:   u16, // crc32c(uuid+inum+inode) LE
+    pub l_i_reserved:      u16,
 }
 
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Osd2Hurd {
-    h_i_reserved1: u16, /* Obsoleted fragment number/size which are removed in ext4 */
-    h_i_mode_high: u16,
-    h_i_uid_high:  u16,
-    h_i_gid_high:  u16,
-    h_i_author:    u32,
+    pub h_i_reserved1: u16, // Obsoleted fragment number/size which are removed in ext4
+    pub h_i_mode_high: u16,
+    pub h_i_uid_high:  u16,
+    pub h_i_gid_high:  u16,
+    pub h_i_author:    u32,
 }
 
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Osd2Masix {
-    h_i_reserved1:     u16,      /* Obsoleted fragment number/size which are removed in ext4 */
-    m_i_file_acl_high: u16,
-    m_i_reserved2:     [u32; 2],
+    pub h_i_reserved1:     u16,      // Obsoleted fragment number/size which are removed in ext4
+    pub m_i_file_acl_high: u16,
+    pub m_i_reserved2:     [u32; 2],
 }
 
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 
-const GOOD_OLD_INODE_SIZE: u16   = 128;
-const MIN_DESC_SIZE:       u16   = 32;
-const N_BLOCKS:            usize = 15;
+const GOOD_OLD_INODE_SIZE: u16 = 128;
+const N_BLOCKS: usize = 15;
 
 
 // FIXME: Debug is derived.
+/// Group descriptor flags (bg_flags).
 #[derive(Copy, Clone, Debug)]
 struct BgFlags(u16);
 
@@ -301,6 +301,7 @@ impl BgFlags {
 }
 
 
+/// State of the file system (s_state).
 #[derive(Copy, Clone)]
 struct State(u16);
 
@@ -323,6 +324,7 @@ impl State {
 }
 
 
+/// Error policy (s_errors).
 #[derive(Copy, Clone, Debug)]
 enum ErrorPolicy {
     /// Invalid value. `s_errors` == 0.
@@ -333,6 +335,7 @@ enum ErrorPolicy {
 }
 
 
+/// File system creator OS.
 #[derive(Copy, Clone, Debug)]
 enum FsCreator {
     Linux,
@@ -343,6 +346,7 @@ enum FsCreator {
 }
 
 
+/// Revision level (s_rev_level).
 #[derive(Copy, Clone, Debug)]
 enum Revision {
     GoodOld,
@@ -350,27 +354,28 @@ enum Revision {
 }
 
 
+/// Compatible features (s_feature_compat).
 #[derive(Copy, Clone)]
 struct CompatFeatures(u32);
 
 impl CompatFeatures {
-    pub fn has_dir_prealloc(&self)     -> bool { self.0 & 0x0001 != 0}
-    pub fn has_imagic_inodes(&self)    -> bool { self.0 & 0x0002 != 0}
-    pub fn has_has_journal(&self)      -> bool { self.0 & 0x0004 != 0}
-    pub fn has_ext_attr(&self)         -> bool { self.0 & 0x0008 != 0}
-    pub fn has_resize_inode(&self)     -> bool { self.0 & 0x0010 != 0}
-    pub fn has_dir_index(&self)        -> bool { self.0 & 0x0020 != 0}
+    pub fn has_dir_prealloc(&self)     -> bool { self.0 & 0x0001 != 0 }
+    pub fn has_imagic_inodes(&self)    -> bool { self.0 & 0x0002 != 0 }
+    pub fn has_has_journal(&self)      -> bool { self.0 & 0x0004 != 0 }
+    pub fn has_ext_attr(&self)         -> bool { self.0 & 0x0008 != 0 }
+    pub fn has_resize_inode(&self)     -> bool { self.0 & 0x0010 != 0 }
+    pub fn has_dir_index(&self)        -> bool { self.0 & 0x0020 != 0 }
     /// Not used in the kernel.
-    pub fn has_lazy_bg(&self)          -> bool { self.0 & 0x0040 != 0}
+    pub fn has_lazy_bg(&self)          -> bool { self.0 & 0x0040 != 0 }
     /// Not used in the kernel, neither in e2fsprogs.
-    pub fn has_exclude_inode(&self)    -> bool { self.0 & 0x0080 != 0}
+    pub fn has_exclude_inode(&self)    -> bool { self.0 & 0x0080 != 0 }
     /// Not used in the kernel.
-    pub fn has_exclude_bitmap(&self)   -> bool { self.0 & 0x0100 != 0}
-    pub fn has_sparse_super2(&self)    -> bool { self.0 & 0x0200 != 0}
-    pub fn has_fast_commit(&self)      -> bool { self.0 & 0x0400 != 0}
+    pub fn has_exclude_bitmap(&self)   -> bool { self.0 & 0x0100 != 0 }
+    pub fn has_sparse_super2(&self)    -> bool { self.0 & 0x0200 != 0 }
+    pub fn has_fast_commit(&self)      -> bool { self.0 & 0x0400 != 0 }
     /// Not referenced in the documentation.
-    pub fn has_stable_inodes(&self)    -> bool { self.0 & 0x0800 != 0}
-    pub fn has_orphan_file(&self)      -> bool { self.0 & 0x1000 != 0}
+    pub fn has_stable_inodes(&self)    -> bool { self.0 & 0x0800 != 0 }
+    pub fn has_orphan_file(&self)      -> bool { self.0 & 0x1000 != 0 }
 
     pub fn get_unknown(&self) -> u32
     {
@@ -384,6 +389,7 @@ impl CompatFeatures {
 }
 
 
+/// Incompatible features (s_feature_incompat).
 #[derive(Copy, Clone)]
 struct IncompatFeatures(u32);
 
@@ -420,6 +426,7 @@ impl IncompatFeatures {
 }
 
 
+/// Read-only compatible features (s_feature_ro_compat).
 #[derive(Copy, Clone)]
 struct RoCompatFeatures(u32);
 
@@ -458,6 +465,7 @@ impl RoCompatFeatures {
 }
 
 
+/// Hash versions.
 #[derive(Copy, Clone, Debug)]
 enum HashVersion {
     Legacy,
@@ -473,6 +481,7 @@ enum HashVersion {
 }
 
 
+/// Default mount options (s_default_mount_opts).
 #[derive(Copy, Clone)]
 struct DefMountOpts(u32);
 
@@ -506,6 +515,7 @@ impl DefMountOpts {
 }
 
 
+/// Superblock flags (s_flags).
 #[derive(Copy, Clone)]
 struct Flags(u32);
 
@@ -533,6 +543,7 @@ impl Flags {
 }
 
 
+/// Encryption algorithms.
 #[derive(Copy, Clone, Debug)]
 enum EncryptAlgo {
     Null,
@@ -551,7 +562,6 @@ impl Default for EncryptAlgo {
 }
 
 
-// TODO
 /// Process an Ext2/3/4 file system.
 pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
 {
@@ -598,6 +608,8 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
         None
     };
 
+    // Reading the group descriptor table from the disk.
+
     let mut desc_table = vec![
         u8::default();
         bg_count as usize * alloc_desc_size!(desc_size)
@@ -612,7 +624,6 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
         sb,
         desc_table,
         opts,
-        blocks_count,
         bg_count,
         bg_size,
         desc_size,
@@ -620,28 +631,32 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
         csum_seed,
     };
 
-    println!("{:#?}", &fs);
+    println!("{:#?}", &fs); // [debug]
 
     for i in 0..bg_count {
-        let desc = fetch_regular_bg_descriptor(i, &fs)?;
-        print!("{:04}: ", i);
-        println!("{:#?}", &desc);
+        // [debug]
+        let desc = fetch_regular_bg_descriptor(i, &fs)?; // [debug]
+        print!("{:04}: ", i); // [debug]
+        println!("{:#?}", &desc); // [debug]
         if desc.bg_flags & 4 == 0 {
-            println!("NOT ZEROED")
-        }
-    }
+            // [debug]
+            println!("NOT ZEROED") // [debug]
+        } // [debug]
+    } // [debug]
 
     let free_blocks = scan_free_space(&fs, ctx, cfg)?;
 
+    println!("{:#?}", free_blocks); // [debug]
+
     if !cfg.report_only {
-        fill::fill_drive(&free_blocks, ctx, cfg)?;
+        fill::fill_free_space(&free_blocks, ctx, cfg)?;
     }
 
     Ok(())
 }
 
 
-// TODO
+/// Scans the drive for free space and returns a map of the usage.
 fn scan_free_space(fs: &Fs, ctx: &mut Context, _cfg: &Config) -> anyhow::Result<UsageMap>
 {
     let drive_size = ctx.drive.seek(SeekFrom::End(0))?;
@@ -650,9 +665,8 @@ fn scan_free_space(fs: &Fs, ctx: &mut Context, _cfg: &Config) -> anyhow::Result<
     for num in 0..fs.bg_count {
         scan_regular_bg(&mut map, num, fs, ctx)?;
     }
-    println!("{:#?}", &map);
 
-    bail!("dummy");
+    Ok(map)
 }
 
 
@@ -831,7 +845,6 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
         }
     }
 
-    // TODO
     Ok(())
 }
 
@@ -1160,12 +1173,14 @@ pub fn ext4_style_crc32c_le(seed: u32, buf: &[u8]) -> u32
 }
 
 
+/// Calculates the offset of a specified block group.
 fn start_of_bg(bg_num: u64, fs: &Fs) -> u64
 {
     fs.sb.s_first_data_block as u64 * bs!(fs.sb.s_log_block_size) + bg_num * fs.bg_size
 }
 
 
+/// Returns the offset of the 1st group desriptor table.
 fn start_of_gdt(sb: &SuperBlock) -> u64
 {
     if bs!(sb.s_log_block_size) == 1024 {
@@ -1181,16 +1196,15 @@ fn start_of_gdt(sb: &SuperBlock) -> u64
 /// important structures and decoded values.
 #[derive(Clone, Debug)]
 struct Fs {
-    sb: SuperBlock,
-    desc_table: Vec<u8>,
-    opts: FsOptions,
+    pub sb: SuperBlock,
+    pub desc_table: Vec<u8>,
+    pub opts: FsOptions,
     // -- computed values --
-    blocks_count: u64,
-    bg_count: u64,
-    bg_size: u64,
-    desc_size: u64,
-    inode_size: u64,
-    csum_seed: Option<u32>,
+    pub bg_count: u64,
+    pub bg_size: u64,
+    pub desc_size: u64,
+    pub inode_size: u64,
+    pub csum_seed: Option<u32>,
 }
 
 
@@ -1199,38 +1213,38 @@ struct Fs {
 /// SuperBlock structure.
 #[derive(Copy, Clone, Debug)]
 struct FsOptions {
-    state: State,
-    error_policy: ErrorPolicy,
-    fs_creator: FsCreator,
-    revision: Revision,
-    dyn_cfg: Option<DynConfig>,
-    journal_cfg: Option<JournalConfig>,
-    bit64_cfg: Option<Bit64Config>,
+    pub state: State,
+    pub error_policy: ErrorPolicy,
+    pub fs_creator: FsCreator,
+    pub revision: Revision,
+    pub dyn_cfg: Option<DynConfig>,
+    pub journal_cfg: Option<JournalConfig>,
+    pub bit64_cfg: Option<Bit64Config>,
 }
 
 
 /// Dynamic revision configuration.
 #[derive(Copy, Clone, Debug)]
 struct DynConfig {
-    compat: CompatFeatures,
-    incompat: IncompatFeatures,
-    ro_compat: RoCompatFeatures,
+    pub compat: CompatFeatures,
+    pub incompat: IncompatFeatures,
+    pub ro_compat: RoCompatFeatures,
 }
 
 
 /// Configuration for systems with journaling support.
 #[derive(Copy, Clone, Debug)]
 struct JournalConfig {
-    def_hash_ver: HashVersion,
-    def_mount_opts: DefMountOpts,
+    pub def_hash_ver: HashVersion,
+    pub def_mount_opts: DefMountOpts,
 }
 
 
 /// 64-bit configuration.
 #[derive(Copy, Clone, Debug)]
 struct Bit64Config {
-    flags: Flags,
-    encrypt_algos: Option<[EncryptAlgo; 4]>,
+    pub flags: Flags,
+    pub encrypt_algos: Option<[EncryptAlgo; 4]>,
 }
 
 
