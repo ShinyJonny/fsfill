@@ -42,32 +42,36 @@ pub fn fill_free_space(map: &UsageMap, ctx: &mut Context, cfg: &Config) -> anyho
         FillMode::Zero => fill_free_space_with(
             &mut ZeroGen::new(),
             map,
-            ctx
+            &mut ctx.drive
         ),
         FillMode::ChaCha20 => fill_free_space_with(
             &mut ChaCha20Rng::from_entropy(),
             map,
-            ctx
+            &mut ctx.drive
         ),
         FillMode::Hc128 => fill_free_space_with(
             &mut Hc128Rng::from_entropy(),
             map,
-            ctx
+            &mut ctx.drive
         ),
     }
 }
 
 
 /// Fills all the free space on the disk, with a supplied byte generator.
-fn fill_free_space_with<T: RngCore>(gen: &mut T, map: &UsageMap, ctx: &mut Context) -> anyhow::Result<()>
+fn fill_free_space_with<R, W>(gen: &mut R, map: &UsageMap, drive: &mut W) -> anyhow::Result<()>
+where
+    R: RngCore,
+    W: Write + Seek
 {
     // NOTE: IMPORTANT: keep this initialised with zeroes for ZeroGen.
-    let mut buf = [0; 4096];
+    let mut buf = [0; 50];
     let mut head = 0;
+    gen.fill_bytes(&mut buf);
 
     for segment in map {
         if segment.status == AllocStatus::Free {
-            ctx.drive.seek(SeekFrom::Start(segment.start))?;
+            drive.seek(SeekFrom::Start(segment.start))?;
 
             let mut written = 0;
 
@@ -81,7 +85,7 @@ fn fill_free_space_with<T: RngCore>(gen: &mut T, map: &UsageMap, ctx: &mut Conte
                 let to_write = segment.size() - written;
                 let write_size = if to_write < buf_remaining { to_write } else { buf_remaining };
 
-                ctx.drive.write(&buf[head..head + write_size])?;
+                drive.write(&buf[head..head + write_size])?;
 
                 written += write_size;
                 head += write_size;
@@ -103,6 +107,45 @@ impl std::fmt::Display for FillMode {
             Self::Zero =>write!(f, "zero"),
             Self::ChaCha20 => write!(f, "chacha20"),
             Self::Hc128 => write!(f, "HC128"),
+        }
+    }
+}
+
+
+// Tests
+
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fill()
+    {
+        use super::*;
+
+        let mut f = std::io::Cursor::new(vec![0xffu8; 4096 * 10]);
+        let len = f.seek(SeekFrom::End(0)).unwrap();
+
+        let mut map = UsageMap::new(len);
+
+        map.update(2, 79, AllocStatus::Used);
+        map.update(201, 335, AllocStatus::Used);
+        map.update(700, 1000, AllocStatus::Used);
+        map.update(5000, 7028, AllocStatus::Used);
+        map.update(20000, 2, AllocStatus::Used);
+        map.update(20229, 33, AllocStatus::Used);
+
+        super::fill_free_space_with(&mut ZeroGen::new(), &map, &mut f).unwrap();
+
+        for seg in map.0.iter().filter(|s| { s.status == AllocStatus::Free }) {
+            for b in &f.get_ref()[seg.start as usize..seg.end as usize] {
+                assert_eq!(*b, 0u8);
+            }
+        }
+
+        for seg in map.0.iter().filter(|s| { s.status == AllocStatus::Used }) {
+            for b in &f.get_ref()[seg.start as usize..seg.end as usize] {
+                assert_eq!(*b, 0xffu8);
+            }
         }
     }
 }
