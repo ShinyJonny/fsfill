@@ -15,13 +15,18 @@ use super::{
     Fs,
     FsCreator,
     fetch_regular_bg_descriptor,
+    extent::{
+        self,
+        ExtentTree,
+        ExtentTreeIterator,
+    },
 };
 
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 
 pub const GOOD_OLD_INODE_SIZE: u16 = 128;
-const N_BLOCKS: usize = 15;
+pub const N_BLOCKS: usize = 15;
 
 
 /// Ext4 inode.
@@ -337,7 +342,7 @@ pub fn scan_inode(
 }
 
 
-fn scan_regular_iblock(_map: &mut UsageMap, inode: &Inode, osd2: &Osd2, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
+fn scan_regular_iblock(map: &mut UsageMap, inode: &Inode, osd2: &Osd2, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
 {
     let i_flags = IFlags { 0: inode.i_flags };
 
@@ -372,6 +377,16 @@ fn scan_regular_iblock(_map: &mut UsageMap, inode: &Inode, osd2: &Osd2, fs: &Fs,
     if i_flags.has_extents() {
         // TODO
         //scan_extents(map, inode, osd2, ctx)?;
+        extent::scan_extent_tree(map, inode, fs, ctx)?;
+
+        let extent_tree = ExtentTree::new(inode, fs, ctx)?;
+        println!("{:#?}", extent_tree); // [debug]
+        let extent_iterator = ExtentTreeIterator::new(&extent_tree); // [debug]
+        println!("[");
+        for e in extent_iterator { // [debug]
+            println!("    {:#?}", e); // [debug]
+        } // [debug]
+        println!("]");
     } else {
         // TODO
         //scan_indirect_blocks(map, inode, osd2, ctx)?;
