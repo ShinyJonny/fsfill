@@ -588,7 +588,13 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()> {
         csum_seed,
     };
 
-    //println!("{:#?}", &fs); // [debug]
+    println!("{:#?}", &fs.sb); // [debug]
+    println!("{:#?}", opts); // [debug]
+    println!("bg_count: {}", bg_count); // [debug]
+    println!("bg_size: {}", bg_size); // [debug]
+    println!("desc_size: {}", desc_size); // [debug]
+    println!("inode_size: {}", inode_size); // [debug]
+    println!("csum_seed: {:?}", csum_seed); // [debug]
 
     //for i in 0..bg_count { // [debug]
     //let desc = fetch_regular_bg_descriptor(i, &fs)?; // [debug]
@@ -1024,7 +1030,7 @@ fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsO
         if incompat.has_journal_dev() {
             bail!("filesystem has an external journaling device");
         }
-        // TODO: Add support for META_BG.
+        // TODO: Add support for meta_bg.
         if incompat.has_meta_bg() {
             bail!("META_BG is not supported due to conflicting documentation");
         }
@@ -1052,9 +1058,13 @@ fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsO
         if ro_compat.has_metadata_csum() && ro_compat.has_gdt_csum() {
             bail!("gdt_csum and metadata_csum cannot be set at the same time");
         }
-        // TODO: Add support for GDT_CSUM.
+        // TODO: Add support for gdt_csum.
         if ro_compat.has_gdt_csum() {
             bail!("unsupported feature: gdt_csum");
+        }
+        // TODO: Add support for verity.
+        if ro_compat.has_verity() {
+            bail!("unsupported feature: verity");
         }
 
         fs_opts.dyn_cfg = Some(DynConfig {

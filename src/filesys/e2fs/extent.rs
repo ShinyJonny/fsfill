@@ -11,21 +11,11 @@ use crate::bs;
 use crate::hilo;
 
 
-// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Extent {
-    pub ee_block: u32,    // first logical block extent covers
-    pub ee_len: u16,      // number of blocks covered by extent
-    pub ee_start_hi: u16, // high 16 bits of physical block
-    pub ee_start_lo: u32, // low 32 bits of physical block
-}
-
-
 pub const EXTENT_SIZE: usize = 12;
 
 
 // https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ExtentHeader {
     pub eh_magic: u16,      // probably will support different formats
     pub eh_entries: u16,    // number of valid entries
@@ -38,8 +28,18 @@ struct ExtentHeader {
 pub const EXTENT_HEADER_SIZE: usize = 12;
 
 
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Extent {
+    pub ee_block: u32,    // first logical block extent covers
+    pub ee_len: u16,      // number of blocks covered by extent
+    pub ee_start_hi: u16, // high 16 bits of physical block
+    pub ee_start_lo: u32, // low 32 bits of physical block
+}
+
+
 // https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ExtentIdx {
     pub ei_block: u32,   // index covers logical blocks from 'block'
     pub ei_leaf_lo: u32, // pointer to the physical block of the next
@@ -53,7 +53,7 @@ pub const EXTENT_IDX_SIZE: usize = 12;
 
 
 // https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ExtentTail {
     pub et_checksum: u32, // crc32c(uuid+inum+extent_block)
 }
@@ -164,7 +164,7 @@ impl Node {
             self.subnodes.as_mut().unwrap().push(new_subnode);
         }
 
-        Ok(()) // TODO
+        Ok(())
     }
 }
 

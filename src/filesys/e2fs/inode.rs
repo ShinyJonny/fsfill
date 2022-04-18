@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use bincode::{DefaultOptions, Options};
 
 use crate::Context;
-use crate::usage_map::UsageMap;
+use crate::usage_map::{UsageMap, AllocStatus};
 use crate::hilo;
 
 use crate::{
@@ -31,7 +31,7 @@ pub const N_BLOCKS: usize = 15;
 
 /// Ext4 inode.
 /// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Inode {
     pub i_mode: u16,              // File mode
     pub i_uid: u16,               // Low 16 bits of Owner Uid
@@ -67,7 +67,7 @@ pub const INODE_STRUCT_SIZE: usize = 160;
 
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Osd2Linux {
     pub l_i_blocks_high: u16, // were l_i_reserved1
     pub l_i_file_acl_high: u16,
@@ -79,7 +79,7 @@ pub struct Osd2Linux {
 
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Osd2Hurd {
     pub h_i_reserved1: u16, // Obsoleted fragment number/size which are removed in ext4
     pub h_i_mode_high: u16,
@@ -90,7 +90,7 @@ pub struct Osd2Hurd {
 
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Osd2Masix {
     pub h_i_reserved1: u16,      // Obsoleted fragment number/size which are removed in ext4
     pub m_i_file_acl_high: u16,
@@ -181,7 +181,7 @@ impl IMode {
 
 
 /// Osd2 structure (i_osd2)
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum Osd2 {
     Linux(Osd2Linux),
     Hurd(Osd2Hurd),
@@ -190,7 +190,7 @@ pub enum Osd2 {
 
 
 /// Ext2 file types (plus some custom ones).
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 enum InodeType {
     Fifo,
     Character,
@@ -332,17 +332,35 @@ pub fn scan_inode(
         InodeType::Regular => scan_regular_iblock(map, &inode, &osd2, fs, ctx)?,
         InodeType::Directory => scan_dir_iblock(map, &inode, &osd2, fs, ctx)?,
         InodeType::SymLink => scan_symlink_iblock(map, &inode, &osd2, fs, ctx)?,
+        // Undocumented special files are handled as regular files, just in case they use external
+        // blocks.
         InodeType::Fifo |
         InodeType::Block |
         InodeType::Character |
-        InodeType::Socket => (),
+        InodeType::Socket => scan_regular_iblock(map, &inode, &osd2, fs, ctx)?,
     }
+
+    if i_flags.has_verity() {
+        // TODO: verity
+        bail!("inode {} has verity files", idx);
+    }
+
+    // TODO: xattrs
+    // Possibly more ...
 
     Ok(()) // TODO
 }
 
 
-fn scan_regular_iblock(map: &mut UsageMap, inode: &Inode, osd2: &Osd2, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
+/// General-purpose procedure for scanning inode's i_block.
+/// Used for regular files, symlinks, and other file types that do not require special handling.
+fn scan_regular_iblock(
+    map: &mut UsageMap,
+    inode: &Inode,
+    osd2: &Osd2,
+    fs: &Fs,
+    ctx: &mut Context
+) -> anyhow::Result<()>
 {
     let i_flags = IFlags { 0: inode.i_flags };
 
@@ -353,46 +371,95 @@ fn scan_regular_iblock(map: &mut UsageMap, inode: &Inode, osd2: &Osd2, fs: &Fs, 
         return Ok(());
     }
 
-    // The number of disk blocks.
-    let mut blocks = inode.i_blocks_lo as u64;
-    if let Some(dyn_cfg) = fs.opts.dyn_cfg {
-        if dyn_cfg.ro_compat.has_huge_file() {
-            if let Osd2::Linux(l) = osd2 {
-                blocks = hilo!(l.l_i_blocks_high, inode.i_blocks_lo);
-            }
-        }
+    let blocks = get_block_count(inode, osd2, fs);
+
+    // Symlinks do not have inline_data flags set when inlined.
+    // NOTE: don't have to check the file size here, as the only way for the block count to grow,
+    // is verity. Fragments might be an issue, but those are obsolete and not secured by feature
+    // flags It is assumed therefore, that they are a non-issue.
+    if blocks == 0 {
+        return Ok(());
     }
 
-    // Multiply by te size of the disk blocks.
-    blocks *= if i_flags.has_huge_file() {
-        bs!(fs.sb.s_log_block_size)
-    } else {
-        512
-    };
-    // Divide by the size of the file system blocks.
-    // FIXME: remove this check.
-    assert!(blocks % bs!(fs.sb.s_log_block_size) == 0);
-    blocks /= bs!(fs.sb.s_log_block_size);
+    let file_size = hilo!(inode.i_size_high, inode.i_size_lo);
 
     if i_flags.has_extents() {
-        // TODO
-        //scan_extents(map, inode, osd2, ctx)?;
         extent::scan_extent_tree(map, inode, fs, ctx)?;
 
         let extent_tree = ExtentTree::new(inode, fs, ctx)?;
-        println!("{:#?}", extent_tree); // [debug]
         let extent_iterator = ExtentTreeIterator::new(&extent_tree); // [debug]
-        println!("[");
-        for e in extent_iterator { // [debug]
-            println!("    {:#?}", e); // [debug]
-        } // [debug]
-        println!("]");
+
+        println!("{:#?}", extent_tree); // [debug]
+
+        for e in extent_iterator {
+            println!("{:#?}", e); // [debug]
+
+            // Position within the file.
+            let log_start = e.ee_block as u64 * bs!(fs.sb.s_log_block_size);
+
+            if log_start >= file_size {
+                continue;
+            }
+
+            let mut len = e.ee_len as u64 * bs!(fs.sb.s_log_block_size);
+            if log_start + len > file_size {
+                len = file_size - log_start;
+            }
+
+            // Position on the disk.
+            let start = hilo!(e.ee_start_hi, e.ee_start_lo) * bs!(fs.sb.s_log_block_size);
+
+            println!("log_start: {}", log_start); // [debug]
+            println!("len: {}", len); // [debug]
+            println!("start: {}", start); // [debug]
+
+            map.update(start, len, AllocStatus::Used);
+        }
     } else {
-        // TODO
-        //scan_indirect_blocks(map, inode, osd2, ctx)?;
+        // The count of the block groups that were processed.
+        let mut block_head = 0;
+
+        // Scanning the 1st 12 direct blocks.
+        for i in 0..12 {
+            if block_head >=  blocks {
+                break;
+            }
+
+            // Position within the file.
+            let log_start = block_head * bs!(fs.sb.s_log_block_size);
+
+            if log_start >= file_size {
+                break;
+            }
+
+            let mut len = bs!(fs.sb.s_log_block_size);
+            if log_start + len > file_size {
+                len = file_size - log_start;
+            }
+
+            // Position on the disk.
+            let start = inode.i_block[i] as u64 * bs!(fs.sb.s_log_block_size);
+
+            // Skip null entries.
+            if start == 0 {
+                println!("direct block {} skipped", i); // [debug]
+                continue;
+            }
+
+            println!("log_start: {}", log_start); // [debug]
+            println!("len: {}", len); // [debug]
+            println!("start: {}", start); // [debug]
+
+            map.update(start, len, AllocStatus::Used);
+            block_head += 1;
+        }
+
+        scan_indirect_block(map, &mut block_head, inode.i_block[12] as u64, inode, osd2, fs, ctx)?;
+        scan_double_indirect_block(map, &mut block_head, inode.i_block[13] as u64, inode, osd2, fs, ctx)?;
+        scan_triple_indirect_block(map, &mut block_head, inode.i_block[14] as u64, inode, osd2, fs, ctx)?;
     }
 
-    Ok(()) // TODO
+    Ok(())
 }
 
 
@@ -402,9 +469,9 @@ fn scan_dir_iblock(_map: &mut UsageMap, _inode: &Inode, _osd2: &Osd2, _fs: &Fs, 
 }
 
 
-fn scan_symlink_iblock(_map: &mut UsageMap, _inode: &Inode, _osd2: &Osd2, _fs: &Fs, _ctx: &mut Context) -> anyhow::Result<()>
+fn scan_symlink_iblock(map: &mut UsageMap, inode: &Inode, osd2: &Osd2, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
 {
-    Ok(()) // TODO
+    scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
 
 
@@ -417,4 +484,206 @@ fn scan_journal_iblock(_map: &mut UsageMap, _inode: &Inode, _osd2: &Osd2, _fs: &
 fn scan_ea_iblock(_map: &mut UsageMap, _inode: &Inode, _osd2: &Osd2, _fs: &Fs, _ctx: &mut Context) -> anyhow::Result<()>
 {
     Ok(()) // TODO
+}
+
+
+fn scan_indirect_block(
+    map: &mut UsageMap,
+    block_head: &mut u64,
+    block: u64,
+    inode: &Inode,
+    osd2: &Osd2,
+    fs: &Fs,
+    ctx: &mut Context
+) -> anyhow::Result<()>
+{
+    // Check for a null block number.
+    if block == 0 {
+        return Ok(());
+    }
+
+    println!("scanning indirect block {}", block); // [debug]
+
+    let block_address = block * bs!(fs.sb.s_log_block_size);
+    let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
+    ctx.drive.seek(SeekFrom::Start(block_address))?;
+    ctx.drive.read_exact(&mut block_buf)?;
+
+    let mut entry_buf = <[u8; 4]>::default();
+    let max_blocks = get_block_count(inode, osd2, fs);
+    let file_size = hilo!(inode.i_size_high, inode.i_size_lo);
+    let entries_in_a_block = bs!(fs.sb.s_log_block_size) as usize / 4;
+
+    for i in 0..entries_in_a_block {
+        if *block_head >= max_blocks {
+            break;
+        }
+
+        // Position within the file.
+        let log_start = *block_head * bs!(fs.sb.s_log_block_size);
+
+        if log_start >= file_size {
+            break;
+        }
+
+        let mut len = bs!(fs.sb.s_log_block_size);
+        if log_start + len > file_size {
+            len = file_size - log_start;
+        }
+
+        entry_buf[0] = block_buf[i * 4];
+        entry_buf[1] = block_buf[i * 4 + 1];
+        entry_buf[2] = block_buf[i * 4 + 2];
+        entry_buf[3] = block_buf[i * 4 + 3];
+
+        let start = u32::from_le_bytes(entry_buf) as u64 * bs!(fs.sb.s_log_block_size);
+
+        // Check for null entries.
+        if start == 0 {
+            println!("indirect block {} entry {} skipped", block, i);
+            continue;
+        }
+
+        println!("log_start: {}", log_start); // [debug]
+        println!("len: {}", len); // [debug]
+        println!("start: {}", start); // [debug]
+
+        map.update(start, len, AllocStatus::Used);
+        *block_head += 1;
+    }
+
+    Ok(())
+}
+
+
+fn scan_double_indirect_block(
+    map: &mut UsageMap,
+    block_head: &mut u64,
+    block: u64,
+    inode: &Inode,
+    osd2: &Osd2,
+    fs: &Fs,
+    ctx: &mut Context
+) -> anyhow::Result<()>
+{
+    // Check for a null block number.
+    if block == 0 {
+        return Ok(());
+    }
+
+    println!("scanning double indirect block {}", block); // [debug]
+
+    let block_address = block * bs!(fs.sb.s_log_block_size);
+    let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
+    ctx.drive.seek(SeekFrom::Start(block_address))?;
+    ctx.drive.read_exact(&mut block_buf)?;
+
+    let mut entry_buf = <[u8; 4]>::default();
+    let max_blocks = get_block_count(inode, osd2, fs);
+    let entries_in_a_block = bs!(fs.sb.s_log_block_size) as usize / 4;
+
+    for i in 0..entries_in_a_block {
+        if *block_head >= max_blocks {
+            break;
+        }
+
+        entry_buf[0] = block_buf[i * 4];
+        entry_buf[1] = block_buf[i * 4 + 1];
+        entry_buf[2] = block_buf[i * 4 + 2];
+        entry_buf[3] = block_buf[i * 4 + 3];
+
+        let indirect_block = u32::from_le_bytes(entry_buf) as u64;
+
+        // Check for null entries.
+        if indirect_block == 0 {
+            println!("double indirect block {} entry {} skipped", block, i);
+            continue;
+        }
+
+        scan_indirect_block(map, block_head, indirect_block, inode, osd2, fs, ctx)?;
+    }
+
+    Ok(())
+}
+
+
+fn scan_triple_indirect_block(
+    map: &mut UsageMap,
+    block_head: &mut u64,
+    block: u64,
+    inode: &Inode,
+    osd2: &Osd2,
+    fs: &Fs,
+    ctx: &mut Context
+) -> anyhow::Result<()>
+{
+    // Check for a null block number.
+    if block == 0 {
+        return Ok(());
+    }
+
+    println!("scanning triple indirect block {}", block); // [debug]
+
+    let block_address = block * bs!(fs.sb.s_log_block_size);
+    let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
+    ctx.drive.seek(SeekFrom::Start(block_address))?;
+    ctx.drive.read_exact(&mut block_buf)?;
+
+    let mut entry_buf = <[u8; 4]>::default();
+    let max_blocks = get_block_count(inode, osd2, fs);
+    let entries_in_a_block = bs!(fs.sb.s_log_block_size) as usize / 4;
+
+    for i in 0..entries_in_a_block {
+        if *block_head >= max_blocks {
+            break;
+        }
+
+        entry_buf[0] = block_buf[i * 4];
+        entry_buf[1] = block_buf[i * 4 + 1];
+        entry_buf[2] = block_buf[i * 4 + 2];
+        entry_buf[3] = block_buf[i * 4 + 3];
+
+        let double_indirect_block = u32::from_le_bytes(entry_buf) as u64;
+
+        // Check for null entries.
+        if double_indirect_block == 0 {
+            println!("triple indirect block {} entry {} skipped", block, i);
+            continue;
+        }
+
+        scan_double_indirect_block(map, block_head, double_indirect_block, inode, osd2, fs, ctx)?;
+    }
+
+    Ok(())
+}
+
+
+/// Returns the number of blocks occupied by the inode's data.
+fn get_block_count(inode: &Inode, osd2: &Osd2, fs: &Fs) -> u64
+{
+    let i_flags = IFlags { 0: inode.i_flags };
+
+    // The number of disk blocks.
+    let mut blocks = inode.i_blocks_lo as u64;
+    if let Some(dyn_cfg) = fs.opts.dyn_cfg {
+        if dyn_cfg.ro_compat.has_huge_file() {
+            if let Osd2::Linux(l) = osd2 {
+                blocks = hilo!(l.l_i_blocks_high, inode.i_blocks_lo);
+            }
+        }
+    }
+
+    // Multiply by the size of the disk blocks.
+    // This block sizing is unique to inodes only.
+    blocks *= if i_flags.has_huge_file() {
+        bs!(fs.sb.s_log_block_size)
+    } else {
+        512
+    };
+    // Divide by the size of the file system blocks.
+    // FIXME: remove this check.
+    assert!(blocks % bs!(fs.sb.s_log_block_size) == 0);
+    blocks /= bs!(fs.sb.s_log_block_size);
+
+    blocks
 }
