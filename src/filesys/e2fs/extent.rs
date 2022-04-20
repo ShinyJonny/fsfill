@@ -106,6 +106,9 @@ impl Node {
 
         let header: ExtentHeader = bincode_opt.deserialize(&raw_node)?;
 
+        // FIXME: this sanity check should probably be removed.
+        assert_eq!(header.eh_magic, 0xf30a);
+
         let entries = if header.eh_depth == 0 {
             let mut extents = Vec::with_capacity(header.eh_entries as usize);
 
@@ -155,7 +158,7 @@ impl Node {
             ctx.drive.seek(SeekFrom::Start(block * bs!(fs.sb.s_log_block_size)))?;
             ctx.drive.read_exact(&mut block_buf)?;
 
-            let mut new_subnode = Node::from_raw(&mut block_buf)?;
+            let mut new_subnode = Self::from_raw(&mut block_buf)?;
 
             if new_subnode.header.eh_depth > 0 {
                 Self::populate_subnodes(&mut new_subnode, fs, ctx)?;
@@ -198,10 +201,10 @@ pub fn scan_extent_tree(
 
     let e_header: ExtentHeader = bincode_opt.deserialize(&i_block)?;
 
-    println!("{:#?}", e_header); // [debug]
+    //println!("{:#?}", e_header); // [debug]
 
     if e_header.eh_depth == 0 {
-        println!("SHALLOW EXTENTS"); // [debug]
+        //println!("SHALLOW EXTENTS"); // [debug]
         return Ok(());
     }
 
@@ -209,7 +212,7 @@ pub fn scan_extent_tree(
         let e_idx_offset = EXTENT_HEADER_SIZE + (i * EXTENT_IDX_SIZE);
         let e_idx: ExtentIdx = bincode_opt.deserialize(&i_block[e_idx_offset..])?;
 
-        println!("{:#?}", e_idx); // [debug]
+        //println!("{:#?}", e_idx); // [debug]
 
         let block = hilo!(e_idx.ei_leaf_hi, e_idx.ei_leaf_lo);
         scan_extent_block(map, block, fs, ctx)?;
@@ -237,7 +240,7 @@ fn scan_extent_block(
 
     let e_header: ExtentHeader = bincode_opt.deserialize(&block_buf)?;
 
-    println!("{:#?}", e_header); // [debug]
+    //println!("{:#?}", e_header); // [debug]
 
     // Extent header + entries.
     map.update(
@@ -257,14 +260,14 @@ fn scan_extent_block(
     }
 
     // Recursively walk the tree.
-    // NOTE: untested.
+    // NOTE: recursive extent tree scanning is untested.
     // It is hard to get a testing sample that has an extent tree deeper than 1 level.
 
     for i in 0..e_header.eh_entries as usize {
         let e_idx_offset = EXTENT_HEADER_SIZE + (i * EXTENT_IDX_SIZE);
         let e_idx: ExtentIdx = bincode_opt.deserialize(&block_buf[e_idx_offset..])?;
 
-        println!("{:#?}", e_idx); // [debug]
+        //println!("{:#?}", e_idx); // [debug]
 
         let block = hilo!(e_idx.ei_leaf_hi, e_idx.ei_leaf_lo);
         scan_extent_block(map, block, fs, ctx)?;
@@ -324,8 +327,8 @@ impl<'t> ExtentTreeIterator<'t> {
             cur_node_i += 1;
         }
 
-        // Debug check.
-        assert!(cur_node.subnodes.is_none()); // [debug]
+        // FIXME: remove this check.
+        assert!(cur_node.subnodes.is_none());
 
         let extents = if let Entries::Extents(v) = &cur_node.entries {
             v
@@ -377,4 +380,4 @@ enum SearchResult<T> {
 // Tests
 
 
-// TODO: test ExtentTree
+// TODO: unit test ExtentTree

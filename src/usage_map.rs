@@ -1,11 +1,13 @@
 use std::ops::{Index, IndexMut};
 use std::slice::SliceIndex;
 
+use serde::Serialize;
+
 
 const MIN_CAPACITY: usize = 8192;
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct UsageMap(pub Vec<Segment>);
 
 impl UsageMap {
@@ -16,7 +18,7 @@ impl UsageMap {
         // FIXME: implement better capacity prediction.
         let capacity = usize::max(
             MIN_CAPACITY,
-            len as usize / (128 * 1024)
+            len as usize / 30000
         );
 
         let mut vec = Vec::with_capacity(capacity);
@@ -54,7 +56,6 @@ impl UsageMap {
         assert!(start <= map_size);
 
         self.add_segment(Segment { start, end, status });
-        println!("map len: {}", self.len()); // [debug]
     }
 
     pub fn add_segment(&mut self, new: Segment)
@@ -144,7 +145,7 @@ impl UsageMap {
 }
 
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Segment {
     pub start: u64,
     pub end: u64,
@@ -160,7 +161,7 @@ impl Segment {
 }
 
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum AllocStatus {
     Free,
     Used,

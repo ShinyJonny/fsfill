@@ -36,8 +36,6 @@ impl RngCore for ZeroGen {
 /// Fills all the free space on the drive.
 pub fn fill_free_space(map: &UsageMap, ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
 {
-    ctx.logger.log(0, &format!("filling the empty space; fill mode: [{}]", cfg.fill_mode));
-
     match cfg.fill_mode {
         FillMode::Zero => fill_free_space_with(
             &mut ZeroGen::new(),

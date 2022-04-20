@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::array::Array;
 use crate::bitmap::Bitmap;
-use crate::fill;
 use crate::hilo;
 use crate::usage_map::{AllocStatus, UsageMap};
 use crate::{Config, Context};
@@ -521,7 +520,8 @@ pub struct Bit64Config {
 
 
 /// Process an Ext2/3/4 file system.
-pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()> {
+pub fn scan_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<UsageMap>
+{
     let bincode_opt = DefaultOptions::new()
         .with_fixint_encoding()
         .allow_trailing_bytes();
@@ -588,13 +588,13 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()> {
         csum_seed,
     };
 
-    println!("{:#?}", &fs.sb); // [debug]
-    println!("{:#?}", opts); // [debug]
-    println!("bg_count: {}", bg_count); // [debug]
-    println!("bg_size: {}", bg_size); // [debug]
-    println!("desc_size: {}", desc_size); // [debug]
-    println!("inode_size: {}", inode_size); // [debug]
-    println!("csum_seed: {:?}", csum_seed); // [debug]
+    //println!("{:#?}", &fs.sb); // [debug]
+    //println!("{:#?}", opts); // [debug]
+    //println!("bg_count: {}", bg_count); // [debug]
+    //println!("bg_size: {}", bg_size); // [debug]
+    //println!("desc_size: {}", desc_size); // [debug]
+    //println!("inode_size: {}", inode_size); // [debug]
+    //println!("csum_seed: {:?}", csum_seed); // [debug]
 
     //for i in 0..bg_count { // [debug]
     //let desc = fetch_regular_bg_descriptor(i, &fs)?; // [debug]
@@ -609,11 +609,7 @@ pub fn process_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<()> {
 
     //println!("{:#?}", free_blocks); // [debug]
 
-    if !cfg.report_only {
-        fill::fill_free_space(&free_blocks, ctx, cfg)?;
-    }
-
-    Ok(())
+    Ok(free_blocks)
 }
 
 
@@ -634,7 +630,7 @@ fn scan_free_space(fs: &Fs, ctx: &mut Context, _cfg: &Config) -> anyhow::Result<
 /// Processes a regular block group, scans the free space and updates the supplied UsageMap.
 fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
 {
-    ctx.logger.log(2, &format!("processing block group {:010}", bg_num));
+    ctx.logger.logln(1, &format!("scanning block group: [{} / {}]", bg_num + 1, fs.bg_count));
 
     let bincode_opt = DefaultOptions::new()
         .with_fixint_encoding()
@@ -652,7 +648,8 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
     if let Some(dyn_cfg) = fs.opts.dyn_cfg {
         // Sparse_super2 is more aggressive, so we need to check that first.
         if dyn_cfg.compat.has_sparse_super2() {
-            if bg_num != fs.sb.s_backup_bgs[0] as u64
+            if bg_num != 0
+                && bg_num != fs.sb.s_backup_bgs[0] as u64
                 && bg_num != fs.sb.s_backup_bgs[1] as u64
             {
                 skip_super = true;
@@ -680,7 +677,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
             gdt_start = bg_start + block_size;
         }
 
-        //println!("gdt start: {}", gdt_start); // [debug]
+        //println!("gdt start: {:#010x}", gdt_start); // [debug]
 
         // The group descriptors.
         if has_csum {
@@ -707,10 +704,9 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
                         AllocStatus::Used,
                     );
 
-                    //if i == 0 { // [debug]
-                    //println!("verified"); // [debug]
-                    //} // [debug]
+                    //if i == 0 { println!("verified"); } // [debug]
                 }
+                //else { println!("unverified"); } // [debug]
             }
         } else {
             // Without checksumming, the whole descriptor table must be initialised.
@@ -722,7 +718,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
 
     if has_csum {
         if !verify_desc_csum(&desc, bg_num, fs)? {
-            ctx.logger.log(2, &format!("group descriptor {} has invalid checksum", bg_num));
+            ctx.logger.logln(1, &format!("group descriptor {} has invalid checksum", bg_num));
             return Ok(());
         }
     }
@@ -730,7 +726,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
     let bg_flags = BgFlags { 0: desc.bg_flags };
 
     if bg_flags.has_unknown() {
-        ctx.logger.log(0, &format!("group descriptor {} has unknown flags: {}", bg_num, bg_flags.get_unknown()));
+        ctx.logger.logln(0, &format!("group descriptor {} has unknown flags: {}", bg_num, bg_flags.get_unknown()));
         bail!("{:?}", desc);
     }
 
@@ -741,6 +737,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
     };
 
     //println!("inode bitmap: {}", inode_bitmap_block); // [debug]
+    //println!("free inodes: {}", hilo!(desc.bg_free_inodes_count_hi, desc.bg_free_inodes_count_lo)); // [debug]
 
     // Inode bitmap.
     if !bg_flags.has_inode_uninit() {
@@ -784,7 +781,8 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
             AllocStatus::Used,
         );
     } else if !bg_flags.has_inode_uninit() {
-        // TODO: In the case where both inode_zeroed and inode_uninit flags are not present, the
+        // TODO: Non-zeroed, but used, inode tables.
+        // In the case where both inode_zeroed and inode_uninit flags are not present, the
         // inode table needs to be filled inode-by-inode, according to the inode bitmap.
         bail!("non-zeroed, but used, inode tables are not supported yet")
     }
@@ -795,7 +793,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
         ctx.drive.seek(SeekFrom::Start(inode_bitmap_block * block_size))?;
         let i_bmp = Bitmap::from_reader(&mut ctx.drive, block_size as usize)?;
 
-        println!("{}", i_bmp); // [debug]
+        //println!("{}", i_bmp); // [debug]
 
         let mut itable = vec![
             u8::default();
@@ -810,36 +808,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
         }
     }
 
-    //ctx.drive.seek(SeekFrom::Start(block_bitmap_block * block_size))?;
-    //let bmp = Bitmap::from_reader(&mut ctx.drive, block_size as usize)?;
-
-    //let cluster_size = bs!(fs.sb.s_log_cluster_size);
-    //let mut cluster_count = fs.sb.s_clusters_per_group as u64;
-
-    //if bg_start + cluster_count * cluster_size > map.size() {
-    //    let group_size = map.size() - bg_start;
-
-    //    cluster_count = group_size / cluster_size;
-    //    if group_size % cluster_size != 0 {
-    //        cluster_count += 1;
-    //    }
-    //}
-
-    //println!("cluster count: {}", cluster_count); // [debug]
-
-    //// NOTE: When a block is marked as used, it does not necessarily mean that it is initialised.
-
-    //if !bg_flags.has_block_uninit() {
-    //    for i in 0..cluster_count {
-    //        if bmp.check_bit(i as usize) {
-    //            map.update(
-    //                bg_start + i * cluster_size,
-    //                cluster_size,
-    //                AllocStatus::Used
-    //            );
-    //        }
-    //    }
-    //}
+    //println!("map len: {}", map.len()); // [debug]
 
     Ok(())
 }
@@ -1047,7 +1016,7 @@ fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsO
         if ro_compat.has_readonly() && !cfg.ignore_readonly {
             bail!("filesystem is marked as read-only");
         }
-        // NOTE: it is unclear what this does.
+        // NOTE: it is unclear what shared_blocks does.
         // It has to do with allocation and overlapping blocks. It might be viable to perform
         // operations on the system, as long as the allocation of blocks is not altered.
         //
@@ -1057,6 +1026,12 @@ fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsO
         }
         if ro_compat.has_metadata_csum() && ro_compat.has_gdt_csum() {
             bail!("gdt_csum and metadata_csum cannot be set at the same time");
+        }
+        if ro_compat.has_replica() {
+            bail!("unsupported feature: replica");
+        }
+        if ro_compat.has_has_snapshot() {
+            bail!("unsupported feature: has_snapshot");
         }
         // TODO: Add support for gdt_csum.
         if ro_compat.has_gdt_csum() {
@@ -1163,6 +1138,7 @@ fn start_of_bg(bg_num: u64, fs: &Fs) -> u64
 fn start_of_first_gdt(sb: &SuperBlock) -> u64
 {
     // NOTE: s_first_data_block > 1 is not accounted for.
+
     if bs!(sb.s_log_block_size) == 1024 {
         2048
     } else {

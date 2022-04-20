@@ -12,9 +12,4 @@ pub enum FsType {
     Ext2,
     Ext3,
     Ext4,
-    Btrfs,
-    Fat,
-    Fat32,
-    Exfat,
-    Ntfs,
 }

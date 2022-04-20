@@ -1,5 +1,4 @@
 use std::io::{Seek, SeekFrom,};
-use anyhow::bail;
 use bincode::{Options, DefaultOptions};
 use crate::Context;
 use super::FsType;
@@ -7,11 +6,13 @@ use super::e2fs;
 
 
 /// Attempts to detect the file system.
-pub fn detect_fs(context: &mut Context) -> anyhow::Result<FsType>
+pub fn detect_fs(context: &mut Context) -> anyhow::Result<Option<FsType>>
 {
-    if detect_e2fs(context)? { return Ok(FsType::Ext2); }
+    if detect_e2fs(context)? {
+        return Ok(Some(FsType::Ext2));
+    }
 
-    bail!("Unknown file system")
+    Ok(None)
 }
 
 

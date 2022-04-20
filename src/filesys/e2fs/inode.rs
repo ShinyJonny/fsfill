@@ -201,6 +201,7 @@ enum InodeType {
     Socket,
     Ea,
     Journal,
+    ResizeInode,
 }
 
 
@@ -273,9 +274,9 @@ pub fn scan_inode(
     };
     let i_flags = IFlags { 0: inode.i_flags };
 
-    println!("{}", idx); // [debug]
-    println!("{:#?}", inode); // [debug]
-    println!("{:#?}", osd2); // [debug]
+    //println!("{}", idx); // [debug]
+    //println!("{:#?}", inode); // [debug]
+    //println!("{:#?}", osd2); // [debug]
 
     // Check inode flags.
 
@@ -299,7 +300,9 @@ pub fn scan_inode(
 
     let i_mode = IMode { 0: inode.i_mode };
 
-    let inode_type = if bg_num == 0 && idx + 1 == 8 {
+    let inode_type = if bg_num == 0 && idx + 1 == 7 {
+        InodeType::ResizeInode
+    } else if bg_num == 0 && idx + 1 == 8 {
         InodeType::Journal
     // NOTE: feature support is not checked.
     } else if i_flags.has_ea_inode() {
@@ -320,13 +323,14 @@ pub fn scan_inode(
         InodeType::Fifo
     // Reserved inodes that are zeroed out.
     } else if bg_num == 0 && inode.i_mode == 0 && idx + 1 < fs.sb.s_first_ino as usize {
-        println!("SKIPPED"); // [debug]
+        //println!("SKIPPED RESERVED ZEROED INODE"); // [debug]
         return Ok(())
     } else {
         bail!("inode {} has invalid mode: {:x}", idx, inode.i_mode & 0xf000);
     };
 
     match inode_type {
+        InodeType::ResizeInode => scan_resize_inode_iblock(map, &inode, &osd2, fs, ctx)?,
         InodeType::Journal => scan_journal_iblock(map, &inode, &osd2, fs, ctx)?,
         InodeType::Ea => scan_ea_iblock(map, &inode, &osd2, fs, ctx)?,
         InodeType::Regular => scan_regular_iblock(map, &inode, &osd2, fs, ctx)?,
@@ -344,11 +348,23 @@ pub fn scan_inode(
         // TODO: verity
         bail!("inode {} has verity files", idx);
     }
+    if inode.i_obso_faddr != 0 {
+        bail!("field i_obso_faddr in inode {} is not zero", idx);
+    }
 
-    // TODO: xattrs
-    // Possibly more ...
+    let xattr_block = if let Osd2::Linux(l) = osd2 {
+        hilo!(l.l_i_file_acl_high, inode.i_file_acl_lo)
+    } else if let Osd2::Masix(m) = osd2 {
+        hilo!(m.m_i_file_acl_high, inode.i_file_acl_lo)
+    } else {
+        inode.i_file_acl_lo as u64
+    };
 
-    Ok(()) // TODO
+    if xattr_block != 0 {
+        scan_xattr_block(map, xattr_block, fs)?;
+    }
+
+    Ok(())
 }
 
 
@@ -387,12 +403,12 @@ fn scan_regular_iblock(
         extent::scan_extent_tree(map, inode, fs, ctx)?;
 
         let extent_tree = ExtentTree::new(inode, fs, ctx)?;
-        let extent_iterator = ExtentTreeIterator::new(&extent_tree); // [debug]
+        let extent_iterator = ExtentTreeIterator::new(&extent_tree);
 
-        println!("{:#?}", extent_tree); // [debug]
+        //println!("{:#?}", extent_tree); // [debug]
 
         for e in extent_iterator {
-            println!("{:#?}", e); // [debug]
+            //println!("{:#?}", e); // [debug]
 
             // Position within the file.
             let log_start = e.ee_block as u64 * bs!(fs.sb.s_log_block_size);
@@ -409,9 +425,9 @@ fn scan_regular_iblock(
             // Position on the disk.
             let start = hilo!(e.ee_start_hi, e.ee_start_lo) * bs!(fs.sb.s_log_block_size);
 
-            println!("log_start: {}", log_start); // [debug]
-            println!("len: {}", len); // [debug]
-            println!("start: {}", start); // [debug]
+            //println!("log_start: {}", log_start); // [debug]
+            //println!("len: {}", len); // [debug]
+            //println!("start: {}", start); // [debug]
 
             map.update(start, len, AllocStatus::Used);
         }
@@ -442,13 +458,13 @@ fn scan_regular_iblock(
 
             // Skip null entries.
             if start == 0 {
-                println!("direct block {} skipped", i); // [debug]
+                //println!("direct block {} skipped", i); // [debug]
                 continue;
             }
 
-            println!("log_start: {}", log_start); // [debug]
-            println!("len: {}", len); // [debug]
-            println!("start: {}", start); // [debug]
+            //println!("log_start: {}", log_start); // [debug]
+            //println!("len: {}", len); // [debug]
+            //println!("start: {}", start); // [debug]
 
             map.update(start, len, AllocStatus::Used);
             block_head += 1;
@@ -463,27 +479,75 @@ fn scan_regular_iblock(
 }
 
 
-fn scan_dir_iblock(_map: &mut UsageMap, _inode: &Inode, _osd2: &Osd2, _fs: &Fs, _ctx: &mut Context) -> anyhow::Result<()>
+fn scan_dir_iblock(
+    map: &mut UsageMap,
+    inode: &Inode,
+    osd2: &Osd2,
+    fs: &Fs,
+    ctx: &mut Context
+) -> anyhow::Result<()>
 {
-    Ok(()) // TODO
-}
-
-
-fn scan_symlink_iblock(map: &mut UsageMap, inode: &Inode, osd2: &Osd2, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
-{
+    // Directory i_blocks appear to behave in the exact same way as regular files.
+    // NOTE: every directory block seems to be initialised.
+    // Therefore, in-depth directory processing does not appear to be necessary. It is, however,
+    // implementation dependent.
     scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
 
 
-fn scan_journal_iblock(_map: &mut UsageMap, _inode: &Inode, _osd2: &Osd2, _fs: &Fs, _ctx: &mut Context) -> anyhow::Result<()>
+fn scan_symlink_iblock(
+    map: &mut UsageMap,
+    inode: &Inode,
+    osd2: &Osd2,
+    fs: &Fs,
+    ctx: &mut Context
+) -> anyhow::Result<()>
 {
-    Ok(()) // TODO
+    // Symlinks behave the exact same way as regular files.
+    scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
 
 
-fn scan_ea_iblock(_map: &mut UsageMap, _inode: &Inode, _osd2: &Osd2, _fs: &Fs, _ctx: &mut Context) -> anyhow::Result<()>
+fn scan_resize_inode_iblock(
+    _map: &mut UsageMap,
+    _inode: &Inode,
+    _osd2: &Osd2,
+    _fs: &Fs,
+    _ctx: &mut Context
+) -> anyhow::Result<()>
 {
-    Ok(()) // TODO
+    // NOTE: the resize inode's block map seems to always point to uninitialised blocks.
+    return Ok(())
+}
+
+
+fn scan_journal_iblock(
+    map: &mut UsageMap,
+    inode: &Inode,
+    osd2: &Osd2,
+    fs: &Fs,
+    ctx: &mut Context
+) -> anyhow::Result<()>
+{
+    // TODO: deeper inspection of the journal.
+    scan_regular_iblock(map, inode, osd2, fs, ctx)
+}
+
+
+fn scan_ea_iblock(
+    map: &mut UsageMap,
+    inode: &Inode,
+    osd2: &Osd2,
+    fs: &Fs,
+    ctx: &mut Context
+) -> anyhow::Result<()>
+{
+    // NOTE: it is assumed that the ea inode blocks are internally initialised.
+    // TODO: deeper inspection of the ea inode blocks.
+
+    //println!("EA INODE"); // [debug]
+
+    scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
 
 
@@ -502,7 +566,7 @@ fn scan_indirect_block(
         return Ok(());
     }
 
-    println!("scanning indirect block {}", block); // [debug]
+    //println!("scanning indirect block {}", block); // [debug]
 
     let block_address = block * bs!(fs.sb.s_log_block_size);
     let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
@@ -540,13 +604,13 @@ fn scan_indirect_block(
 
         // Check for null entries.
         if start == 0 {
-            println!("indirect block {} entry {} skipped", block, i);
+            //println!("indirect block {} entry {} skipped", block, i);
             continue;
         }
 
-        println!("log_start: {}", log_start); // [debug]
-        println!("len: {}", len); // [debug]
-        println!("start: {}", start); // [debug]
+        //println!("log_start: {}", log_start); // [debug]
+        //println!("len: {}", len); // [debug]
+        //println!("start: {}", start); // [debug]
 
         map.update(start, len, AllocStatus::Used);
         *block_head += 1;
@@ -571,7 +635,7 @@ fn scan_double_indirect_block(
         return Ok(());
     }
 
-    println!("scanning double indirect block {}", block); // [debug]
+    //println!("scanning double indirect block {}", block); // [debug]
 
     let block_address = block * bs!(fs.sb.s_log_block_size);
     let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
@@ -596,7 +660,7 @@ fn scan_double_indirect_block(
 
         // Check for null entries.
         if indirect_block == 0 {
-            println!("double indirect block {} entry {} skipped", block, i);
+            //println!("double indirect block {} entry {} skipped", block, i);
             continue;
         }
 
@@ -622,7 +686,7 @@ fn scan_triple_indirect_block(
         return Ok(());
     }
 
-    println!("scanning triple indirect block {}", block); // [debug]
+    //println!("scanning triple indirect block {}", block); // [debug]
 
     let block_address = block * bs!(fs.sb.s_log_block_size);
     let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
@@ -647,12 +711,29 @@ fn scan_triple_indirect_block(
 
         // Check for null entries.
         if double_indirect_block == 0 {
-            println!("triple indirect block {} entry {} skipped", block, i);
+            //println!("triple indirect block {} entry {} skipped", block, i);
             continue;
         }
 
         scan_double_indirect_block(map, block_head, double_indirect_block, inode, osd2, fs, ctx)?;
     }
+
+    Ok(())
+}
+
+
+/// Scans the extended attribute block.
+fn scan_xattr_block(map: &mut UsageMap, block: u64, fs: &Fs) -> anyhow::Result<()>
+{
+    let start = block * bs!(fs.sb.s_log_block_size);
+    let size = bs!(fs.sb.s_log_block_size);
+
+    map.update(start, size, AllocStatus::Used);
+
+    // NOTE: it is assumed that the acl/xattr block is initialised.
+    // TODO: deeper inspection of the acl/xattr block.
+
+    //println!("xattr block: {}", block); // [debug]
 
     Ok(())
 }

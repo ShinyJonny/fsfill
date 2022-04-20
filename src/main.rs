@@ -35,6 +35,10 @@ struct Args {
     #[clap(short, long)]
     report_only: bool,
 
+    /// Prettify the output.
+    #[clap(short, long)]
+    pretty: bool,
+
     /// Type of file system
     #[clap(short = 't', long = "type", arg_enum, value_name = "TYPE")]
     fs_type: Option<FsType>,
@@ -73,6 +77,7 @@ fn main()
     cfg.log_file_path = args.log_file;
     cfg.ignore_recovery = args.ignore_recovery;
     cfg.ignore_readonly = args.ignore_readonly;
+    cfg.pretty = args.pretty;
 
     if let Some(mode) = args.fill_mode {
         cfg.fill_mode = mode;
@@ -85,8 +90,8 @@ fn main()
     if let Some(path) = &cfg.log_file_path {
         let f = OpenOptions::new()
             .create(true)
+            .append(true)
             .read(false)
-            .write(true)
             .open(&path);
 
         log_file = match f {
@@ -125,30 +130,63 @@ fn main()
     if let Some(fs_type) = args.fs_type {
         cfg.fs_type = fs_type;
     } else {
-        context.logger.log(0, "detecting the file system type");
+        context.logger.log(0, "=== detecting the file system type: ");
 
         cfg.fs_type = match filesys::detect_fs(&mut context) {
-            Ok(v) => v,
+            Ok(fs_option) => {
+                if let Some(fs_type) = fs_option {
+                    fs_type
+                } else {
+                    context.logger.logln(0, "unknown");
+                    return;
+                }
+            },
             Err(e) => {
                 eprintln!("error: {}", &e);
                 return;
             }
         };
+
+        match cfg.fs_type {
+            FsType::Ext2 => context.logger.logln(0, "ext2"),
+            FsType::Ext3 => context.logger.logln(0, "ext3"),
+            FsType::Ext4 => context.logger.logln(0, "ext4"),
+        }
     }
 
-    context.logger.log(0, "processing the drive");
+    context.logger.logln(0, "=== scanning the drive");
 
-    // Process the drive.
+    // Scan the drive.
 
-    if let Err(e) = match cfg.fs_type {
+    let map = match cfg.fs_type {
         FsType::Ext2 |
         FsType::Ext3 |
-        FsType::Ext4 => filesys::e2fs::process_drive(&mut context, &cfg),
+        FsType::Ext4 => filesys::e2fs::scan_drive(&mut context, &cfg),
+        #[allow(unreachable_patterns)]
         _ => Err(anyhow!("this filesystem is not implemented yet")),
-    } {
+    };
+
+    if let Err(e) = map {
         eprintln!("{}: {}", cfg.cmd_name, &e);
         return;
     };
+
+    if cfg.report_only {
+        if cfg.pretty {
+            println!("{}", serde_json::to_string_pretty(&map.unwrap()).unwrap());
+        } else {
+            println!("{}", serde_json::to_string(&map.unwrap()).unwrap());
+        }
+    } else {
+        context.logger.log(0, "=== filling the free space");
+        context.logger.logln(0, &format!("; fill mode: {}", cfg.fill_mode));
+
+
+        if let Err(e) = fill::fill_free_space(&map.unwrap(), &mut context, &cfg) {
+            eprintln!("{}: {}", cfg.cmd_name, &e);
+            return;
+        }
+    }
 }
 
 
@@ -164,6 +202,7 @@ pub struct Config {
     pub fill_mode: FillMode,
     pub ignore_recovery: bool,
     pub ignore_readonly: bool,
+    pub pretty: bool,
 }
 
 impl Default for Config {
@@ -179,6 +218,7 @@ impl Default for Config {
             fill_mode: FillMode::Zero,
             ignore_recovery: false,
             ignore_readonly: false,
+            pretty: false,
         }
     }
 }
