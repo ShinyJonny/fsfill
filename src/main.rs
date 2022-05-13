@@ -16,6 +16,7 @@ use logger::Logger;
 use fill::FillMode;
 
 
+/// Command line argument configuration.
 #[derive(Debug, Parser)]
 #[clap(version)]
 struct Args {
@@ -35,7 +36,7 @@ struct Args {
     #[clap(short, long)]
     report_only: bool,
 
-    /// Prettify the output.
+    /// Prettify the output (when using --report-only)
     #[clap(short, long)]
     pretty: bool,
 
@@ -47,7 +48,7 @@ struct Args {
     #[clap(short = 'R', long)]
     ignore_recovery: bool,
 
-    /// Ignore read-only flags.
+    /// Ignore read-only flags
     #[clap(short = 'O', long)]
     ignore_readonly: bool,
 
@@ -59,7 +60,7 @@ struct Args {
     #[clap(short, long, parse(from_os_str), value_name = "FILE")]
     log_file: Option<PathBuf>,
 
-    /// Mode of disk filling.
+    /// Mode of disk filling
     #[clap(short, long, arg_enum, value_name = "MODE")]
     fill_mode: Option<FillMode>
 }
@@ -68,6 +69,8 @@ struct Args {
 fn main()
 {
     let args = Args::parse();
+
+    // Process the command line arguments.
 
     let mut cfg = Config::default();
     cfg.cmd_name = std::env::args().nth(0).unwrap();
@@ -85,7 +88,7 @@ fn main()
 
     let mut log_file = None;
 
-    // Create the log file in rw mode.
+    // Create or open the log file in append mode.
 
     if let Some(path) = &cfg.log_file_path {
         let f = OpenOptions::new()
@@ -104,7 +107,7 @@ fn main()
         };
     }
 
-    // Open the drive in rw mode.
+    // Open the drive.
 
     let drive = OpenOptions::new()
         .create(false)
@@ -116,7 +119,7 @@ fn main()
         Ok(f) => f,
         Err(e) => {
             eprintln!("{}: {}: {}", cfg.cmd_name, &cfg.drive_path.display(), &e);
-            return;
+            std::process::exit(1);
         }
     };
 
@@ -138,12 +141,13 @@ fn main()
                     fs_type
                 } else {
                     context.logger.logln(0, "unknown");
-                    return;
+                    eprintln!("{}: aborting", cfg.cmd_name);
+                    std::process::exit(1);
                 }
             },
             Err(e) => {
-                eprintln!("error: {}", &e);
-                return;
+                eprintln!("{}: {}", cfg.cmd_name, &e);
+                std::process::exit(1);
             }
         };
 
@@ -154,9 +158,9 @@ fn main()
         }
     }
 
-    context.logger.logln(0, "=== scanning the drive");
-
     // Scan the drive.
+
+    context.logger.logln(0, "=== scanning the drive");
 
     let map = match cfg.fs_type {
         FsType::Ext2 |
@@ -168,23 +172,27 @@ fn main()
 
     if let Err(e) = map {
         eprintln!("{}: {}", cfg.cmd_name, &e);
-        return;
+        std::process::exit(1);
     };
 
     if cfg.report_only {
+        // Print out the usage map in JSON format.
+
         if cfg.pretty {
             println!("{}", serde_json::to_string_pretty(&map.unwrap()).unwrap());
         } else {
             println!("{}", serde_json::to_string(&map.unwrap()).unwrap());
         }
     } else {
+        // Fill the free space.
+
         context.logger.log(0, "=== filling the free space");
         context.logger.logln(0, &format!("; fill mode: {}", cfg.fill_mode));
 
 
         if let Err(e) = fill::fill_free_space(&map.unwrap(), &mut context, &cfg) {
             eprintln!("{}: {}", cfg.cmd_name, &e);
-            return;
+            std::process::exit(1);
         }
     }
 }

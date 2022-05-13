@@ -14,7 +14,7 @@ use crate::hilo;
 pub const EXTENT_SIZE: usize = 12;
 
 
-// https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ExtentHeader {
     pub eh_magic: u16,      // probably will support different formats
@@ -38,7 +38,7 @@ pub struct Extent {
 }
 
 
-// https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ExtentIdx {
     pub ei_block: u32,   // index covers logical blocks from 'block'
@@ -52,7 +52,7 @@ struct ExtentIdx {
 pub const EXTENT_IDX_SIZE: usize = 12;
 
 
-// https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
+// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ExtentTail {
     pub et_checksum: u32, // crc32c(uuid+inum+extent_block)
@@ -62,21 +62,25 @@ struct ExtentTail {
 pub const EXTENT_TAIL_SIZE: usize = 4;
 
 
-/// Extent tree.
+/// E2fs extent tree.
 #[derive(Clone, Debug)]
 pub struct ExtentTree {
     root_node: Node,
 }
 
 impl ExtentTree {
+    /// Reads the inode's extent tree from the drive.
     pub fn new(inode: &Inode, fs: &Fs, ctx: &mut Context) -> anyhow::Result<Self>
     {
+        // Get the elements of inode.i_block.
         let mut i_block = [u8::default(); N_BLOCKS * 4];
         for (ei, element) in inode.i_block.iter().enumerate() {
             for (bi, byte) in element.to_le_bytes().iter().enumerate() {
                 i_block[ei * 4 + bi] = *byte;
             }
         }
+
+        // Construct the root node and its subnodes.
 
         let mut root_node = Node::from_raw(&i_block)?;
         root_node.populate_subnodes(fs, ctx)?;
@@ -104,10 +108,14 @@ impl Node {
             .with_fixint_encoding()
             .allow_trailing_bytes();
 
+        // Deserialise the extent header.
+
         let header: ExtentHeader = bincode_opt.deserialize(&raw_node)?;
 
-        // FIXME: this sanity check should probably be removed.
+        // FIXME: this sanity check should probably be removed or handled better.
         assert_eq!(header.eh_magic, 0xf30a);
+
+        // Deserialise the extents or extent indexes.
 
         let entries = if header.eh_depth == 0 {
             let mut extents = Vec::with_capacity(header.eh_entries as usize);
@@ -143,18 +151,24 @@ impl Node {
     /// Populates its subnodes from the disk, recursively.
     pub fn populate_subnodes(&mut self, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
     {
+        // If the entries are not indexes, we have reached the leaves of the tree.
         let indexes = if let Entries::Indexes(v) = &mut self.entries {
             v
         } else {
             return Ok(())
         };
 
+        // Prepare buffers.
         self.subnodes = Some(Vec::with_capacity(self.header.eh_entries as usize));
         let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
+
+        // For each index, read the raw node block from the drive, deserialise it, and populate its
+        // subnodes.
 
         for idx in indexes {
             let block = hilo!(idx.ei_leaf_hi, idx.ei_leaf_lo);
 
+            // Read the raw node block from the drive.
             ctx.drive.seek(SeekFrom::Start(block * bs!(fs.sb.s_log_block_size)))?;
             ctx.drive.read_exact(&mut block_buf)?;
 
@@ -192,6 +206,8 @@ pub fn scan_extent_tree(
         .with_fixint_encoding()
         .allow_trailing_bytes();
 
+    // Get the elements if oninode.i_block.
+
     let mut i_block = [u8::default(); N_BLOCKS * 4];
     for (ei, element) in inode.i_block.iter().enumerate() {
         for (bi, byte) in element.to_le_bytes().iter().enumerate() {
@@ -199,20 +215,19 @@ pub fn scan_extent_tree(
         }
     }
 
+    // Deserialise the header.
+
     let e_header: ExtentHeader = bincode_opt.deserialize(&i_block)?;
 
-    //println!("{:#?}", e_header); // [debug]
-
     if e_header.eh_depth == 0 {
-        //println!("SHALLOW EXTENTS"); // [debug]
         return Ok(());
     }
+
+    // Deserialise the entries and scan the extent node blocks.
 
     for i in 0..e_header.eh_entries as usize {
         let e_idx_offset = EXTENT_HEADER_SIZE + (i * EXTENT_IDX_SIZE);
         let e_idx: ExtentIdx = bincode_opt.deserialize(&i_block[e_idx_offset..])?;
-
-        //println!("{:#?}", e_idx); // [debug]
 
         let block = hilo!(e_idx.ei_leaf_hi, e_idx.ei_leaf_lo);
         scan_extent_block(map, block, fs, ctx)?;
@@ -222,7 +237,7 @@ pub fn scan_extent_tree(
 }
 
 
-/// Scans the space occupied by the extent tree, in an extent block.
+/// Scans the space occupied by an extent tree node.
 fn scan_extent_block(
     map: &mut UsageMap,
     block: u64,
@@ -234,13 +249,13 @@ fn scan_extent_block(
         .with_fixint_encoding()
         .allow_trailing_bytes();
 
+    // Read the raw node block.
+
     let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
     ctx.drive.seek(SeekFrom::Start(block * bs!(fs.sb.s_log_block_size)))?;
     ctx.drive.read_exact(&mut block_buf)?;
 
     let e_header: ExtentHeader = bincode_opt.deserialize(&block_buf)?;
-
-    //println!("{:#?}", e_header); // [debug]
 
     // Extent header + entries.
     map.update(
@@ -267,8 +282,6 @@ fn scan_extent_block(
         let e_idx_offset = EXTENT_HEADER_SIZE + (i * EXTENT_IDX_SIZE);
         let e_idx: ExtentIdx = bincode_opt.deserialize(&block_buf[e_idx_offset..])?;
 
-        //println!("{:#?}", e_idx); // [debug]
-
         let block = hilo!(e_idx.ei_leaf_hi, e_idx.ei_leaf_lo);
         scan_extent_block(map, block, fs, ctx)?;
     }
@@ -277,7 +290,7 @@ fn scan_extent_block(
 }
 
 
-// Iterators
+// Implement iterating the tree.
 
 
 pub struct ExtentTreeIterator<'t> {
@@ -294,6 +307,13 @@ impl<'t> ExtentTreeIterator<'t> {
         }
     }
 
+    /// Performs a single walk down the tree, following the path laid out by the indices.
+    /// After each walk, the last element in indices (the path) is incremented. When the path
+    /// becomes invalid (an index exceeds the number of nodes), the invalid index is set to 0 and
+    /// the previous index is incremented. Thus, by repeatedly executing this method, all of the
+    /// possible paths are eventually taken.
+    /// When a valid path is taken, the method returns the leaf (extent). Thus, all of the tree's
+    /// leaves are eventually iterated.
     fn try_find_element(&mut self) -> SearchResult<<Self as Iterator>::Item>
     {
         if self.indices[0] >= self.tree.root_node.header.eh_entries as usize {
@@ -327,7 +347,7 @@ impl<'t> ExtentTreeIterator<'t> {
             cur_node_i += 1;
         }
 
-        // FIXME: remove this check.
+        // TODO: remove this check.
         assert!(cur_node.subnodes.is_none());
 
         let extents = if let Entries::Extents(v) = &cur_node.entries {
@@ -355,6 +375,8 @@ impl<'t> Iterator for ExtentTreeIterator<'t> {
 
     fn next(&mut self) -> Option<Self::Item>
     {
+        // Walk the tree repeatedly until a leaf is found.
+        // If the last possible path in the tree is reached, the iterator has been exhausted.
         loop {
             match self.try_find_element() {
                 SearchResult::BadPath => (),

@@ -18,6 +18,7 @@ where
     }
 }
 
+// Implement `=` operator overloading.
 impl<T, const C: usize> PartialEq for Array<T, C>
 where
     T: PartialEq

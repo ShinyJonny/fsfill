@@ -6,11 +6,14 @@ use std::io::Read;
 pub struct Bitmap(Vec<u8>);
 
 impl Bitmap {
+    /// Create a new Bitmap from a slice of bytes.
     pub fn from_bytes(bytes: &[u8]) -> Self
     {
         Self { 0: bytes.to_vec() }
     }
 
+    /// Create a new Bitmap from a Reader.
+    /// This method will read *size* bytes from the Reader.
     pub fn from_reader<R: Read>(reader: &mut R, size: usize) -> Result<Self, std::io::Error>
     {
         let mut vec = vec![u8::default(); size];
@@ -19,12 +22,8 @@ impl Bitmap {
         Ok(Self { 0: vec })
     }
 
-    pub fn read_new<R: Read>(&mut self, reader: &mut R, size: usize) -> Result<(),std::io::Error>
-    {
-        self.0.resize(size, u8::default());
-        reader.read_exact(&mut self.0)
-    }
-
+    /// Tests the bit indexed by idx.
+    /// Returns true if the bit is set.
     pub fn check_bit(&self, idx: usize) -> bool
     {
         let byte = self.0[idx / 8];
@@ -33,6 +32,7 @@ impl Bitmap {
         (byte >> bit_pos) & 0x01 == 1
     }
 
+    /// Checks all the bits, collecting the results into a Vec.
     pub fn check_all(&self) -> Vec<bool>
     {
         let mut ret_vec = Vec::with_capacity(self.0.len() * 8);

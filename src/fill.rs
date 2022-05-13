@@ -56,16 +56,21 @@ pub fn fill_free_space(map: &UsageMap, ctx: &mut Context, cfg: &Config) -> anyho
 }
 
 
-/// Fills all the free space on the disk, with a supplied byte generator.
+/// Fills all the free space on the disk, using a supplied byte generator.
 fn fill_free_space_with<R, W>(gen: &mut R, map: &UsageMap, drive: &mut W) -> anyhow::Result<()>
 where
     R: RngCore,
     W: Write + Seek
 {
     // NOTE: IMPORTANT: keep this initialised with zeroes for ZeroGen.
-    let mut buf = [0; 50];
+    let mut buf = [0; 4096];
+    // Buffer head.
     let mut head = 0;
     gen.fill_bytes(&mut buf);
+
+    // Iterate through the segments in the map.
+    // If a segment is free, fill the corresponding drive addresses with the bytes from the buffer.
+    // The buffer is refilled with the byte generator when it is used up.
 
     for segment in map {
         if segment.status == AllocStatus::Free {

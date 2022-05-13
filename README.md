@@ -5,7 +5,7 @@ Zero-fill unused space in file systems
 ## Description
 
 Scans the file system for unused space and fills it with bytes.
-Can be used for file systems within encryption layers like (dm-crypt)[https://wiki.archlinux.org/title/Dm-crypt] to encrypt all the blocks that were not touched by the file system, restoring plausible deniability.
+Can be used for file systems within encryption layers like [dm-crypt](https://wiki.archlinux.org/title/Dm-crypt) to encrypt all the blocks that were not touched by the file system and restore plausible deniability.
 
 Currently supported file systems:
 - Ext2

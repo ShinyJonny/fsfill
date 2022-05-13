@@ -4,18 +4,20 @@ use std::slice::SliceIndex;
 use serde::Serialize;
 
 
-const MIN_CAPACITY: usize = 8192;
+const MIN_CAPACITY: usize = 8200;
 
 
+/// Data structure for tracking free/used space on a drive.
 #[derive(Clone, Debug, Serialize)]
 pub struct UsageMap(pub Vec<Segment>);
 
 impl UsageMap {
+    /// Creates a new UsageMap with the specified size.
     pub fn new(len: u64) -> Self
     {
         assert!(len > 0);
 
-        // FIXME: implement better capacity prediction.
+        // TODO: implement better capacity prediction.
         let capacity = usize::max(
             MIN_CAPACITY,
             len as usize / 30000
@@ -33,16 +35,21 @@ impl UsageMap {
         Self { 0: vec }
     }
 
+    /// Returns the number of segments in the map.
     pub fn len(&self) -> usize
     {
         self.0.len()
     }
 
+    /// Returns the size of the map, i.e. the max address.
     pub fn size(&self) -> u64
     {
         self.0.last().unwrap().end
     }
 
+    /// Updates a portion of the map.
+    /// The method tolerates size reaching beyond the end of the map, and cuts it off. Updating the
+    /// map with the start reaching beyond the end of the map will panic.
     pub fn update(&mut self, start: u64, size: u64, status: AllocStatus)
     {
         // Tolerate reaching beyond the end of the map.
@@ -58,6 +65,7 @@ impl UsageMap {
         self.add_segment(Segment { start, end, status });
     }
 
+    /// Update a portion of the map with a raw Segment.
     pub fn add_segment(&mut self, new: Segment)
     {
         let vector = &self.0;
@@ -78,7 +86,6 @@ impl UsageMap {
         let vector = &mut self.0;
 
         // Delete all the segments in-between the start and end segments.
-
         for _ in (start_i + 1)..end_i {
             vector.remove(start_i + 1);
         }
@@ -89,8 +96,6 @@ impl UsageMap {
         }
 
         end_i = start_i + 1;
-
-        // NEED TO DEAL WITH 0-SIZED REMNANTS!!!.
 
         if vector[start_i].status == vector[end_i].status {
             if vector[start_i].status == new.status {
@@ -111,10 +116,13 @@ impl UsageMap {
             }
         }
 
+        // Remove remaining zero-sized segments and merge neighbours of the same status.
+
         self.clean_zero_sized();
         self.merge_neighbours();
     }
 
+    /// Remove zero-sized segments.
     fn clean_zero_sized(&mut self)
     {
         while let Some(pos) = self.0.iter()
@@ -124,6 +132,7 @@ impl UsageMap {
         }
     }
 
+    /// Merge neighbouring segments of the same type.
     fn merge_neighbours(&mut self)
     {
         let vector = &mut self.0;
@@ -145,13 +154,13 @@ impl UsageMap {
 }
 
 
+/// Data structure representing a run of bytes on a drive.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Segment {
     pub start: u64,
     pub end: u64,
     pub status: AllocStatus,
 }
-
 
 impl Segment {
     pub fn size(&self) -> usize
@@ -161,6 +170,7 @@ impl Segment {
 }
 
 
+/// Allocation status of a Segment.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum AllocStatus {
     Free,
@@ -170,6 +180,8 @@ pub enum AllocStatus {
 
 // Trait implementations.
 
+
+// Iterating.
 
 impl<'a> IntoIterator for UsageMap {
     type Item = Segment;
@@ -200,6 +212,8 @@ impl<'a> IntoIterator for &'a mut UsageMap {
         self.0.as_mut_slice().into_iter()
     }
 }
+
+// Indexing
 
 impl<I> Index<I> for UsageMap
 where

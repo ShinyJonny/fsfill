@@ -99,6 +99,7 @@ pub struct Osd2Masix {
 
 
 /// Inode flags (i_flags)
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 struct IFlags(u32);
 
 impl IFlags {
@@ -148,6 +149,7 @@ impl IFlags {
 
 
 /// Inode mode (i_mode)
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 struct IMode(u16);
 
 impl IMode {
@@ -227,7 +229,7 @@ pub fn fetch_inode(inum: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<Inod
 }
 
 
-/// Reads a group's raw inode table, into the supplied buffer.
+/// Reads a group's raw inode table into the supplied buffer.
 pub fn read_itable(bg_num: u64, buf: &mut [u8], fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
 {
     assert!(buf.len() >= fs.sb.s_inodes_per_group as usize * alloc_inode_size!(fs.inode_size));
@@ -250,7 +252,7 @@ pub fn read_itable(bg_num: u64, buf: &mut [u8], fs: &Fs, ctx: &mut Context) -> a
 }
 
 
-/// Scans an inode, specified by the index into  the supplied inode table.
+/// Scans an inode, specified by the index, into the supplied inode table.
 pub fn scan_inode(
     map: &mut UsageMap,
     idx: usize,
@@ -274,10 +276,6 @@ pub fn scan_inode(
     };
     let i_flags = IFlags { 0: inode.i_flags };
 
-    //println!("{}", idx); // [debug]
-    //println!("{:#?}", inode); // [debug]
-    //println!("{:#?}", osd2); // [debug]
-
     // Check inode flags.
 
     if i_flags.has_unknown() {
@@ -299,6 +297,8 @@ pub fn scan_inode(
     }
 
     let i_mode = IMode { 0: inode.i_mode };
+
+    // Determine the inode type.
 
     let inode_type = if bg_num == 0 && idx + 1 == 7 {
         InodeType::ResizeInode
@@ -323,12 +323,12 @@ pub fn scan_inode(
         InodeType::Fifo
     // Reserved inodes that are zeroed out.
     } else if bg_num == 0 && inode.i_mode == 0 && idx + 1 < fs.sb.s_first_ino as usize {
-        //println!("SKIPPED RESERVED ZEROED INODE"); // [debug]
         return Ok(())
     } else {
         bail!("inode {} has invalid mode: {:x}", idx, inode.i_mode & 0xf000);
     };
 
+    // Scan the iblock.
     match inode_type {
         InodeType::ResizeInode => scan_resize_inode_iblock(map, &inode, &osd2, fs, ctx)?,
         InodeType::Journal => scan_journal_iblock(map, &inode, &osd2, fs, ctx)?,
@@ -351,6 +351,8 @@ pub fn scan_inode(
     if inode.i_obso_faddr != 0 {
         bail!("field i_obso_faddr in inode {} is not zero", idx);
     }
+
+    // Scan the block of extended attributes.
 
     let xattr_block = if let Osd2::Linux(l) = osd2 {
         hilo!(l.l_i_file_acl_high, inode.i_file_acl_lo)
@@ -405,11 +407,7 @@ fn scan_regular_iblock(
         let extent_tree = ExtentTree::new(inode, fs, ctx)?;
         let extent_iterator = ExtentTreeIterator::new(&extent_tree);
 
-        //println!("{:#?}", extent_tree); // [debug]
-
         for e in extent_iterator {
-            //println!("{:#?}", e); // [debug]
-
             // Position within the file.
             let log_start = e.ee_block as u64 * bs!(fs.sb.s_log_block_size);
 
@@ -424,11 +422,6 @@ fn scan_regular_iblock(
 
             // Position on the disk.
             let start = hilo!(e.ee_start_hi, e.ee_start_lo) * bs!(fs.sb.s_log_block_size);
-
-            //println!("log_start: {}", log_start); // [debug]
-            //println!("len: {}", len); // [debug]
-            //println!("start: {}", start); // [debug]
-
             map.update(start, len, AllocStatus::Used);
         }
     } else {
@@ -458,13 +451,8 @@ fn scan_regular_iblock(
 
             // Skip null entries.
             if start == 0 {
-                //println!("direct block {} skipped", i); // [debug]
                 continue;
             }
-
-            //println!("log_start: {}", log_start); // [debug]
-            //println!("len: {}", len); // [debug]
-            //println!("start: {}", start); // [debug]
 
             map.update(start, len, AllocStatus::Used);
             block_head += 1;
@@ -479,6 +467,7 @@ fn scan_regular_iblock(
 }
 
 
+/// Scans a directory iblock.
 fn scan_dir_iblock(
     map: &mut UsageMap,
     inode: &Inode,
@@ -495,6 +484,7 @@ fn scan_dir_iblock(
 }
 
 
+/// Scans a symlink iblock.
 fn scan_symlink_iblock(
     map: &mut UsageMap,
     inode: &Inode,
@@ -508,6 +498,7 @@ fn scan_symlink_iblock(
 }
 
 
+/// Scans a resize_inode iblock.
 fn scan_resize_inode_iblock(
     _map: &mut UsageMap,
     _inode: &Inode,
@@ -521,6 +512,7 @@ fn scan_resize_inode_iblock(
 }
 
 
+/// Scans a journal iblock.
 fn scan_journal_iblock(
     map: &mut UsageMap,
     inode: &Inode,
@@ -534,6 +526,7 @@ fn scan_journal_iblock(
 }
 
 
+/// Scans the iblock of an EA inode.
 fn scan_ea_iblock(
     map: &mut UsageMap,
     inode: &Inode,
@@ -544,13 +537,11 @@ fn scan_ea_iblock(
 {
     // NOTE: it is assumed that the ea inode blocks are internally initialised.
     // TODO: deeper inspection of the ea inode blocks.
-
-    //println!("EA INODE"); // [debug]
-
     scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
 
 
+/// Scans an indirect block.
 fn scan_indirect_block(
     map: &mut UsageMap,
     block_head: &mut u64,
@@ -566,7 +557,7 @@ fn scan_indirect_block(
         return Ok(());
     }
 
-    //println!("scanning indirect block {}", block); // [debug]
+    // Read the block into a buffer.
 
     let block_address = block * bs!(fs.sb.s_log_block_size);
     let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
@@ -577,6 +568,8 @@ fn scan_indirect_block(
     let max_blocks = get_block_count(inode, osd2, fs);
     let file_size = hilo!(inode.i_size_high, inode.i_size_lo);
     let entries_in_a_block = bs!(fs.sb.s_log_block_size) as usize / 4;
+
+    // Deserialise and process all the entries.
 
     for i in 0..entries_in_a_block {
         if *block_head >= max_blocks {
@@ -604,13 +597,8 @@ fn scan_indirect_block(
 
         // Check for null entries.
         if start == 0 {
-            //println!("indirect block {} entry {} skipped", block, i);
             continue;
         }
-
-        //println!("log_start: {}", log_start); // [debug]
-        //println!("len: {}", len); // [debug]
-        //println!("start: {}", start); // [debug]
 
         map.update(start, len, AllocStatus::Used);
         *block_head += 1;
@@ -620,6 +608,7 @@ fn scan_indirect_block(
 }
 
 
+/// Scan a double indirect block.
 fn scan_double_indirect_block(
     map: &mut UsageMap,
     block_head: &mut u64,
@@ -635,7 +624,7 @@ fn scan_double_indirect_block(
         return Ok(());
     }
 
-    //println!("scanning double indirect block {}", block); // [debug]
+    // Read the block into a buffer.
 
     let block_address = block * bs!(fs.sb.s_log_block_size);
     let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
@@ -645,6 +634,8 @@ fn scan_double_indirect_block(
     let mut entry_buf = <[u8; 4]>::default();
     let max_blocks = get_block_count(inode, osd2, fs);
     let entries_in_a_block = bs!(fs.sb.s_log_block_size) as usize / 4;
+
+    // Deserialise and process all the entries.
 
     for i in 0..entries_in_a_block {
         if *block_head >= max_blocks {
@@ -660,7 +651,6 @@ fn scan_double_indirect_block(
 
         // Check for null entries.
         if indirect_block == 0 {
-            //println!("double indirect block {} entry {} skipped", block, i);
             continue;
         }
 
@@ -671,6 +661,7 @@ fn scan_double_indirect_block(
 }
 
 
+/// Scan a triple indirect block.
 fn scan_triple_indirect_block(
     map: &mut UsageMap,
     block_head: &mut u64,
@@ -686,7 +677,7 @@ fn scan_triple_indirect_block(
         return Ok(());
     }
 
-    //println!("scanning triple indirect block {}", block); // [debug]
+    // Read the block into a buffer.
 
     let block_address = block * bs!(fs.sb.s_log_block_size);
     let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
@@ -696,6 +687,8 @@ fn scan_triple_indirect_block(
     let mut entry_buf = <[u8; 4]>::default();
     let max_blocks = get_block_count(inode, osd2, fs);
     let entries_in_a_block = bs!(fs.sb.s_log_block_size) as usize / 4;
+
+    // Deserialise and process all the entries.
 
     for i in 0..entries_in_a_block {
         if *block_head >= max_blocks {
@@ -711,7 +704,6 @@ fn scan_triple_indirect_block(
 
         // Check for null entries.
         if double_indirect_block == 0 {
-            //println!("triple indirect block {} entry {} skipped", block, i);
             continue;
         }
 
@@ -732,8 +724,6 @@ fn scan_xattr_block(map: &mut UsageMap, block: u64, fs: &Fs) -> anyhow::Result<(
 
     // NOTE: it is assumed that the acl/xattr block is initialised.
     // TODO: deeper inspection of the acl/xattr block.
-
-    //println!("xattr block: {}", block); // [debug]
 
     Ok(())
 }

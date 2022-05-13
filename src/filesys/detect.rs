@@ -26,9 +26,12 @@ fn detect_e2fs(context: &mut Context) -> anyhow::Result<bool>
     context.drive.seek(SeekFrom::Start(1024))?;
     let sb: e2fs::SuperBlock = bincode_opt.deserialize_from(&context.drive)?;
 
+    // Magic value.
     if sb.s_magic != 0xef53 {
         return Ok(false);
     }
+
+    // Check for invalid fields.
 
     if sb.s_state == 0 || sb.s_state >> 3 != 0 {
         return Ok(false);

@@ -180,6 +180,7 @@ const GROUP_DESC_STRUCT_SIZE: usize = 64;
 
 // FIXME: Debug is derived.
 /// Group descriptor flags (bg_flags).
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone, Debug)]
 pub struct BgFlags(u16);
 
@@ -201,6 +202,7 @@ impl BgFlags {
 
 
 /// State of the f&selfile system (s_state).
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone)]
 pub struct State(u16);
 
@@ -254,6 +256,7 @@ pub enum Revision {
 
 
 /// Compatible features (s_feature_compat).
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone)]
 pub struct CompatFeatures(u32);
 
@@ -289,6 +292,7 @@ impl CompatFeatures {
 
 
 /// Incompatible features (s_feature_incompat).
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone)]
 pub struct IncompatFeatures(u32);
 
@@ -326,6 +330,7 @@ impl IncompatFeatures {
 
 
 /// Read-only compatible features (s_feature_ro_compat).
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone)]
 pub struct RoCompatFeatures(u32);
 
@@ -365,6 +370,7 @@ impl RoCompatFeatures {
 
 
 /// Hash versions.
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone, Debug)]
 pub enum HashVersion {
     Legacy,
@@ -381,6 +387,7 @@ pub enum HashVersion {
 
 
 /// Default mount options (s_default_mount_opts).
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone)]
 pub struct DefMountOpts(u32);
 
@@ -415,6 +422,7 @@ impl DefMountOpts {
 
 
 /// Superblock flags (s_flags).
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone)]
 pub struct Flags(u32);
 
@@ -443,6 +451,7 @@ impl Flags {
 
 
 /// Encryption algorithms.
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone, Debug)]
 pub enum EncryptAlgo {
     Null,
@@ -452,7 +461,6 @@ pub enum EncryptAlgo {
     /// The documentation does not mention this.
     AES256CTS,
 }
-
 
 impl Default for EncryptAlgo {
     fn default() -> Self
@@ -464,7 +472,7 @@ impl Default for EncryptAlgo {
 
 /// Filesystem parameters.
 /// This structure contains all the relevant information about the filesystem. This includes
-/// important structures and decoded values.
+/// important data structures and decoded values.
 #[derive(Clone, Debug)]
 pub struct Fs {
     pub sb: SuperBlock,
@@ -526,6 +534,8 @@ pub fn scan_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<UsageMap>
         .with_fixint_encoding()
         .allow_trailing_bytes();
 
+    // Read and deserialise the super block.
+
     ctx.drive.seek(SeekFrom::Start(1024))?;
     let sb: SuperBlock = bincode_opt.deserialize_from(&ctx.drive)?;
     let opts = get_and_check_fs_options(&sb, cfg)?;
@@ -565,7 +575,7 @@ pub fn scan_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<UsageMap>
         None
     };
 
-    // Reading the group descriptor table from the disk.
+    // Reading the raw group descriptor table from the disk.
 
     let mut desc_table = vec![
         u8::default();
@@ -588,26 +598,9 @@ pub fn scan_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<UsageMap>
         csum_seed,
     };
 
-    //println!("{:#?}", &fs.sb); // [debug]
-    //println!("{:#?}", opts); // [debug]
-    //println!("bg_count: {}", bg_count); // [debug]
-    //println!("bg_size: {}", bg_size); // [debug]
-    //println!("desc_size: {}", desc_size); // [debug]
-    //println!("inode_size: {}", inode_size); // [debug]
-    //println!("csum_seed: {:?}", csum_seed); // [debug]
-
-    //for i in 0..bg_count { // [debug]
-    //let desc = fetch_regular_bg_descriptor(i, &fs)?; // [debug]
-    //print!("{:04}: ", i); // [debug]
-    //println!("{:#?}", &desc); // [debug]
-    //if desc.bg_flags & 4 == 0 { // [debug]
-    //println!("NOT ZEROED") // [debug]
-    //} // [debug]
-    //} // [debug]
+    // Scan the drive free space on  the drive and return the usage map.
 
     let free_blocks = scan_free_space(&fs, ctx, cfg)?;
-
-    //println!("{:#?}", free_blocks); // [debug]
 
     Ok(free_blocks)
 }
@@ -664,6 +657,8 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
         }
     }
 
+    // Scan the group's super block group descriptors.
+
     if !skip_super {
         let gdt_start: u64;
 
@@ -677,9 +672,11 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
             gdt_start = bg_start + block_size;
         }
 
-        //println!("gdt start: {:#010x}", gdt_start); // [debug]
-
         // The group descriptors.
+        // If the file system has a checksum support, the group descriptors have to be checked and
+        // added to the usage map individually. Otherwise, the whole group descriptor table has to
+        // be initialised.
+
         if has_csum {
             // Read in this group's copy of the gdt.
 
@@ -703,10 +700,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
                         fs.desc_size,
                         AllocStatus::Used,
                     );
-
-                    //if i == 0 { println!("verified"); } // [debug]
                 }
-                //else { println!("unverified"); } // [debug]
             }
         } else {
             // Without checksumming, the whole descriptor table must be initialised.
@@ -716,6 +710,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
 
     let desc = fetch_regular_bg_descriptor(bg_num, fs)?;
 
+    // Do not process groups with invalid descriptors.
     if has_csum {
         if !verify_desc_csum(&desc, bg_num, fs)? {
             ctx.logger.logln(1, &format!("group descriptor {} has invalid checksum", bg_num));
@@ -736,9 +731,6 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
         desc.bg_inode_bitmap_lo as u64
     };
 
-    //println!("inode bitmap: {}", inode_bitmap_block); // [debug]
-    //println!("free inodes: {}", hilo!(desc.bg_free_inodes_count_hi, desc.bg_free_inodes_count_lo)); // [debug]
-
     // Inode bitmap.
     if !bg_flags.has_inode_uninit() {
         map.update(
@@ -753,8 +745,6 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
     } else {
         desc.bg_block_bitmap_lo as u64
     };
-
-    //println!("block bitmap: {}", block_bitmap_block); // [debug]
 
     // Block bitmap.
     if !bg_flags.has_block_uninit() {
@@ -771,8 +761,6 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
         desc.bg_inode_table_lo as u64
     };
 
-    //println!("inode table: {}", inode_table_block); // [debug]
-
     // Inode table.
     if bg_flags.has_inode_zeroed() {
         map.update(
@@ -781,7 +769,7 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
             AllocStatus::Used,
         );
     } else if !bg_flags.has_inode_uninit() {
-        // TODO: Non-zeroed, but used, inode tables.
+        // TODO: Non-zeroed but used inode tables.
         // In the case where both inode_zeroed and inode_uninit flags are not present, the
         // inode table needs to be filled inode-by-inode, according to the inode bitmap.
         bail!("non-zeroed, but used, inode tables are not supported yet")
@@ -790,10 +778,12 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
     // Processing the inodes.
 
     if !bg_flags.has_inode_uninit() {
+        // Read and deserialise the inode bitmap.
+
         ctx.drive.seek(SeekFrom::Start(inode_bitmap_block * block_size))?;
         let i_bmp = Bitmap::from_reader(&mut ctx.drive, block_size as usize)?;
 
-        //println!("{}", i_bmp); // [debug]
+        // Read the raw inode table.
 
         let mut itable = vec![
             u8::default();
@@ -801,14 +791,13 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
         ];
         inode::read_itable(bg_num, &mut itable, fs, ctx)?;
 
+        // Scan the inodes.
         for i in 0..fs.sb.s_inodes_per_group as usize {
             if i_bmp.check_bit(i) {
                 inode::scan_inode(map, i, bg_num, &mut itable, fs, ctx)?;
             }
         }
     }
-
-    //println!("map len: {}", map.len()); // [debug]
 
     Ok(())
 }
@@ -831,17 +820,21 @@ fn fetch_regular_bg_descriptor(bg_num: u64, fs: &Fs) -> anyhow::Result<GroupDesc
 }
 
 
-// Source: https://github.com/tytso/e2fsprogs/blob/master/lib/ext2fs/csum.c#L716
 /// Verifies the checksum of a group descriptor.
+/// Reference: https://github.com/tytso/e2fsprogs/blob/master/lib/ext2fs/csum.c#L716
 fn verify_desc_csum(desc: &GroupDescriptor, bg_num: u64, fs: &Fs) -> anyhow::Result<bool>
 {
     if fs.opts.dyn_cfg.is_none() {
         bail!("cannot verify checksum: dyn_cfg is None");
     }
 
+    // Get the group descriptor.
+
     let mut desc: GroupDescriptor = *desc;
     let orig_csum = desc.bg_checksum;
     let mut csum: u32;
+
+    // Compute the checksum.
 
     if fs.opts.dyn_cfg.unwrap().ro_compat.has_metadata_csum() {
         let bincode_opt = DefaultOptions::new()
@@ -873,6 +866,7 @@ fn verify_desc_csum(desc: &GroupDescriptor, bg_num: u64, fs: &Fs) -> anyhow::Res
         bail!("cannot verify checksum: neither of metadata_csum and gdt_csum is set");
     }
 
+    // Compare the checksums (lower 16 bits).
     Ok((csum & 0xffff) as u16 == orig_csum)
 }
 
@@ -1113,14 +1107,12 @@ fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsO
         }
     }
 
-    // --- End of checking ---
-
     Ok(fs_opts)
 }
 
 
-// Source: https://github.com/FauxFaux/ext4-rs/blob/211fa05cd7b1498060b4b68ffed368d8d3c3b788/src/parse.rs
 /// Ext4-style crc32c algorithm.
+/// Source: https://github.com/FauxFaux/ext4-rs/blob/211fa05cd7b1498060b4b68ffed368d8d3c3b788/src/parse.rs
 fn ext4_style_crc32c_le(seed: u32, buf: &[u8]) -> u32
 {
     crc::crc32::update(seed ^ (!0), &crc::crc32::CASTAGNOLI_TABLE, buf) ^ (!0u32)
