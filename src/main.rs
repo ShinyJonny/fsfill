@@ -105,6 +105,8 @@ fn main()
         };
     }
 
+    let mut logger = Logger::new(log_file, &cfg);
+
     // Open the drive.
 
     let drive = OpenOptions::new()
@@ -116,14 +118,14 @@ fn main()
     let drive = match drive {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("{}: {}: {}", cfg.cmd_name, &cfg.drive_path.display(), &e);
+            logger.logln(0, &format!("{}: {}: {}", cfg.cmd_name, &cfg.drive_path.display(), &e));
             std::process::exit(1);
         }
     };
 
     let mut context = Context {
         drive,
-        logger: Logger::new(log_file, &cfg),
+        logger,
     };
 
     // Set or detect the FS type.
@@ -139,12 +141,12 @@ fn main()
                     fs_type
                 } else {
                     context.logger.logln(0, "unknown");
-                    eprintln!("{}: aborting", cfg.cmd_name);
+                    context.logger.logln(0, &format!("{}: aborting", cfg.cmd_name));
                     std::process::exit(1);
                 }
             },
             Err(e) => {
-                eprintln!("{}: {}", cfg.cmd_name, &e);
+                context.logger.logln(0, &format!("{}: {}", cfg.cmd_name, &e));
                 std::process::exit(1);
             }
         };
@@ -169,7 +171,7 @@ fn main()
     };
 
     if let Err(e) = map {
-        eprintln!("{}: {}", cfg.cmd_name, &e);
+        context.logger.logln(0, &format!("{}: {}", cfg.cmd_name, &e));
         std::process::exit(1);
     };
 
@@ -188,7 +190,7 @@ fn main()
         context.logger.logln(0, &format!("; fill mode: {}", cfg.fill_mode));
 
         if let Err(e) = fill::fill_free_space(&map.unwrap(), &mut context, &cfg) {
-            eprintln!("{}: {}", cfg.cmd_name, &e);
+            context.logger.logln(0, &format!("{}: {}", cfg.cmd_name, &e));
             std::process::exit(1);
         }
     }
