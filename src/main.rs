@@ -130,12 +130,12 @@ fn main()
 
     // Set or detect the FS type.
 
-    if let Some(fs_type) = args.fs_type {
-        cfg.fs_type = fs_type;
+    cfg.fs_type = if let Some(fs_type) = args.fs_type {
+        fs_type
     } else {
         context.logger.log(0, "=== detecting the file system type: ");
 
-        cfg.fs_type = match filesys::detect_fs(&mut context) {
+        let fs_type = match filesys::detect_fs(&mut context) {
             Ok(fs_option) => {
                 if let Some(fs_type) = fs_option {
                     fs_type
@@ -151,12 +151,14 @@ fn main()
             }
         };
 
-        match cfg.fs_type {
+        match fs_type {
             FsType::Ext2 => context.logger.logln(0, "ext2"),
             FsType::Ext3 => context.logger.logln(0, "ext3"),
             FsType::Ext4 => context.logger.logln(0, "ext4"),
         }
-    }
+
+        fs_type
+    };
 
     // Scan the drive.
 
@@ -168,20 +170,20 @@ fn main()
         FsType::Ext4 => filesys::e2fs::scan_drive(&mut context, &cfg),
         #[allow(unreachable_patterns)]
         _ => Err(anyhow!("this filesystem is not implemented yet")),
-    };
-
-    if let Err(e) = map {
+    }.unwrap_or_else(|e| {
         context.logger.logln(0, &format!("{}: {}", cfg.cmd_name, &e));
         std::process::exit(1);
-    };
+    });
+
+    // Report or fill.
 
     if cfg.report_only {
         // Print out the usage map in JSON format.
 
         if cfg.pretty {
-            println!("{}", serde_json::to_string_pretty(&map.unwrap()).unwrap());
+            println!("{}", serde_json::to_string_pretty(&map).unwrap());
         } else {
-            println!("{}", serde_json::to_string(&map.unwrap()).unwrap());
+            println!("{}", serde_json::to_string(&map).unwrap());
         }
     } else {
         // Fill the free space.
@@ -189,14 +191,14 @@ fn main()
         context.logger.log(0, "=== filling the free space");
         context.logger.logln(0, &format!("; fill mode: {}", cfg.fill_mode));
 
-        if let Err(e) = fill::fill_free_space(&map.unwrap(), &mut context, &cfg) {
+        if let Err(e) = fill::fill_free_space(&map, &mut context, &cfg) {
             context.logger.logln(0, &format!("{}: {}", cfg.cmd_name, &e));
             std::process::exit(1);
         }
     }
 }
 
-/// Contains configuration options.
+/// Configuration options.
 #[derive(Clone, Debug)]
 pub struct Config {
     pub cmd_name: String,
@@ -219,7 +221,7 @@ impl Default for Config {
             fs_type: FsType::Ext4,
             drive_path: PathBuf::default(),
             log_file_path: None,
-            report_only: false,
+            report_only: true,
             verbosity: 0,
             fill_mode: FillMode::Zero,
             ignore_recovery: false,
@@ -229,7 +231,7 @@ impl Default for Config {
     }
 }
 
-/// Contains shared mutable state.
+/// Shared mutable state.
 #[derive(Debug)]
 pub struct Context {
     pub drive: File,
