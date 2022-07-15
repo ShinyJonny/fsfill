@@ -22,12 +22,10 @@ use super::{
     },
 };
 
-
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 
 pub const GOOD_OLD_INODE_SIZE: u16 = 128;
 pub const N_BLOCKS: usize = 15;
-
 
 /// Ext4 inode.
 /// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
@@ -62,9 +60,7 @@ pub struct Inode {
     pub i_projid: u32,            // Project ID
 }
 
-
 pub const INODE_STRUCT_SIZE: usize = 160;
-
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,7 +73,6 @@ pub struct Osd2Linux {
     pub l_i_reserved: u16,
 }
 
-
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Osd2Hurd {
@@ -88,7 +83,6 @@ pub struct Osd2Hurd {
     pub h_i_author: u32,
 }
 
-
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Osd2Masix {
@@ -96,7 +90,6 @@ pub struct Osd2Masix {
     pub m_i_file_acl_high: u16,
     pub m_i_reserved2: [u32; 2],
 }
-
 
 /// Inode flags (i_flags)
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
@@ -147,7 +140,6 @@ impl IFlags {
     }
 }
 
-
 /// Inode mode (i_mode)
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 struct IMode(u16);
@@ -181,7 +173,6 @@ impl IMode {
     }
 }
 
-
 /// Osd2 structure (i_osd2)
 #[derive(Clone, Debug)]
 pub enum Osd2 {
@@ -189,7 +180,6 @@ pub enum Osd2 {
     Hurd(Osd2Hurd),
     Masix(Osd2Masix),
 }
-
 
 /// Ext2 file types (plus some custom ones).
 #[derive(Clone, Debug)]
@@ -205,7 +195,6 @@ enum InodeType {
     Journal,
     ResizeInode,
 }
-
 
 /// Fetches an inode, based on the number of the inode.
 pub fn fetch_inode(inum: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<Inode>
@@ -228,7 +217,6 @@ pub fn fetch_inode(inum: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<Inod
     Ok(inode)
 }
 
-
 /// Reads a group's raw inode table into the supplied buffer.
 pub fn read_itable(bg_num: u64, buf: &mut [u8], fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
 {
@@ -250,7 +238,6 @@ pub fn read_itable(bg_num: u64, buf: &mut [u8], fs: &Fs, ctx: &mut Context) -> a
 
     Ok(())
 }
-
 
 /// Scans an inode, specified by the index, into the supplied inode table.
 pub fn scan_inode(
@@ -369,7 +356,6 @@ pub fn scan_inode(
     Ok(())
 }
 
-
 /// General-purpose procedure for scanning inode's i_block.
 /// Used for regular files, symlinks, and other file types that do not require special handling.
 fn scan_regular_iblock(
@@ -466,7 +452,6 @@ fn scan_regular_iblock(
     Ok(())
 }
 
-
 /// Scans a directory iblock.
 fn scan_dir_iblock(
     map: &mut UsageMap,
@@ -483,7 +468,6 @@ fn scan_dir_iblock(
     scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
 
-
 /// Scans a symlink iblock.
 fn scan_symlink_iblock(
     map: &mut UsageMap,
@@ -496,7 +480,6 @@ fn scan_symlink_iblock(
     // Symlinks behave the exact same way as regular files.
     scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
-
 
 /// Scans a resize_inode iblock.
 fn scan_resize_inode_iblock(
@@ -511,7 +494,6 @@ fn scan_resize_inode_iblock(
     return Ok(())
 }
 
-
 /// Scans a journal iblock.
 fn scan_journal_iblock(
     map: &mut UsageMap,
@@ -524,7 +506,6 @@ fn scan_journal_iblock(
     // TODO: deeper inspection of the journal.
     scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
-
 
 /// Scans the iblock of an EA inode.
 fn scan_ea_iblock(
@@ -539,7 +520,6 @@ fn scan_ea_iblock(
     // TODO: deeper inspection of the ea inode blocks.
     scan_regular_iblock(map, inode, osd2, fs, ctx)
 }
-
 
 /// Scans an indirect block.
 fn scan_indirect_block(
@@ -607,7 +587,6 @@ fn scan_indirect_block(
     Ok(())
 }
 
-
 /// Scan a double indirect block.
 fn scan_double_indirect_block(
     map: &mut UsageMap,
@@ -659,7 +638,6 @@ fn scan_double_indirect_block(
 
     Ok(())
 }
-
 
 /// Scan a triple indirect block.
 fn scan_triple_indirect_block(
@@ -713,7 +691,6 @@ fn scan_triple_indirect_block(
     Ok(())
 }
 
-
 /// Scans the extended attribute block.
 fn scan_xattr_block(map: &mut UsageMap, block: u64, fs: &Fs) -> anyhow::Result<()>
 {
@@ -727,7 +704,6 @@ fn scan_xattr_block(map: &mut UsageMap, block: u64, fs: &Fs) -> anyhow::Result<(
 
     Ok(())
 }
-
 
 /// Returns the number of blocks occupied by the inode's data.
 fn get_block_count(inode: &Inode, osd2: &Osd2, fs: &Fs) -> u64

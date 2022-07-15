@@ -20,7 +20,6 @@ use inode::{
     GOOD_OLD_INODE_SIZE,
 };
 
-
 /// The Ext2/3/4 Superblock structure.
 /// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -143,7 +142,6 @@ pub struct SuperBlock {
     pub s_checksum: u32,            // crc32c(superblock)
 }
 
-
 /// The Ext2/3/4 group descriptor structure.
 /// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -174,9 +172,7 @@ pub struct GroupDescriptor {
     pub bg_reserved: u32,
 }
 
-
 const GROUP_DESC_STRUCT_SIZE: usize = 64;
-
 
 // FIXME: Debug is derived.
 /// Group descriptor flags (bg_flags).
@@ -199,7 +195,6 @@ impl BgFlags {
         self.get_unknown() != 0
     }
 }
-
 
 /// State of the f&selfile system (s_state).
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
@@ -224,7 +219,6 @@ impl State {
     }
 }
 
-
 /// Error policy (s_errors).
 #[derive(Copy, Clone, Debug)]
 pub enum ErrorPolicy {
@@ -234,7 +228,6 @@ pub enum ErrorPolicy {
     ReadOnly,
     Panic,
 }
-
 
 /// File system creator OS.
 #[derive(Copy, Clone, Debug)]
@@ -246,14 +239,12 @@ pub enum FsCreator {
     Lites,
 }
 
-
 /// Revision level (s_rev_level).
 #[derive(Copy, Clone, Debug)]
 pub enum Revision {
     GoodOld,
     Dynamic,
 }
-
 
 /// Compatible features (s_feature_compat).
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
@@ -289,7 +280,6 @@ impl CompatFeatures {
         self.get_unknown() != 0
     }
 }
-
 
 /// Incompatible features (s_feature_incompat).
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
@@ -327,7 +317,6 @@ impl IncompatFeatures {
         self.get_unknown() != 0
     }
 }
-
 
 /// Read-only compatible features (s_feature_ro_compat).
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
@@ -368,7 +357,6 @@ impl RoCompatFeatures {
     }
 }
 
-
 /// Hash versions.
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone, Debug)]
@@ -384,7 +372,6 @@ pub enum HashVersion {
     /// It does however mention it later in different structures.
     SipHash,
 }
-
 
 /// Default mount options (s_default_mount_opts).
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
@@ -420,7 +407,6 @@ impl DefMountOpts {
     }
 }
 
-
 /// Superblock flags (s_flags).
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone)]
@@ -449,7 +435,6 @@ impl Flags {
     }
 }
 
-
 /// Encryption algorithms.
 /// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Copy, Clone, Debug)]
@@ -469,7 +454,6 @@ impl Default for EncryptAlgo {
     }
 }
 
-
 /// Filesystem parameters.
 /// This structure contains all the relevant information about the filesystem. This includes
 /// important data structures and decoded values.
@@ -486,7 +470,6 @@ pub struct Fs {
     pub csum_seed: Option<u32>,
 }
 
-
 /// Decoded file system flag fields and enumerations; after validating all the options.
 /// Contains all the flag fields and enumerations. Does not substitute, but complements the
 /// SuperBlock structure.
@@ -501,7 +484,6 @@ pub struct FsOptions {
     pub bit64_cfg: Option<Bit64Config>,
 }
 
-
 /// Dynamic revision configuration.
 #[derive(Copy, Clone, Debug)]
 pub struct DynConfig {
@@ -510,7 +492,6 @@ pub struct DynConfig {
     pub ro_compat: RoCompatFeatures,
 }
 
-
 /// Configuration for systems with journaling support.
 #[derive(Copy, Clone, Debug)]
 pub struct JournalConfig {
@@ -518,14 +499,12 @@ pub struct JournalConfig {
     pub def_mount_opts: DefMountOpts,
 }
 
-
 /// 64-bit configuration.
 #[derive(Copy, Clone, Debug)]
 pub struct Bit64Config {
     pub flags: Flags,
     pub encrypt_algos: Option<[EncryptAlgo; 4]>,
 }
-
 
 /// Process an Ext2/3/4 file system.
 pub fn scan_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<UsageMap>
@@ -605,7 +584,6 @@ pub fn scan_drive(ctx: &mut Context, cfg: &Config) -> anyhow::Result<UsageMap>
     Ok(free_blocks)
 }
 
-
 /// Scans the drive for free space and returns a map of the usage.
 fn scan_free_space(fs: &Fs, ctx: &mut Context, _cfg: &Config) -> anyhow::Result<UsageMap>
 {
@@ -618,7 +596,6 @@ fn scan_free_space(fs: &Fs, ctx: &mut Context, _cfg: &Config) -> anyhow::Result<
 
     Ok(map)
 }
-
 
 /// Processes a regular block group, scans the free space and updates the supplied UsageMap.
 fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) -> anyhow::Result<()>
@@ -802,7 +779,6 @@ fn scan_regular_bg(map: &mut UsageMap, bg_num: u64, fs: &Fs, ctx: &mut Context) 
     Ok(())
 }
 
-
 /// Fetches a block group descriptor, based on the number of the block group.
 /// Descriptors are read from the first block group. This procedure assumes that the standard
 /// layout (not META_BG) is used.
@@ -818,7 +794,6 @@ fn fetch_regular_bg_descriptor(bg_num: u64, fs: &Fs) -> anyhow::Result<GroupDesc
 
     Ok(desc)
 }
-
 
 /// Verifies the checksum of a group descriptor.
 /// Reference: https://github.com/tytso/e2fsprogs/blob/master/lib/ext2fs/csum.c#L716
@@ -869,7 +844,6 @@ fn verify_desc_csum(desc: &GroupDescriptor, bg_num: u64, fs: &Fs) -> anyhow::Res
     // Compare the checksums (lower 16 bits).
     Ok((csum & 0xffff) as u16 == orig_csum)
 }
-
 
 /// Creates FsConfig from a super block and checks it for invalid or unsupported configuration.
 fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsOptions>
@@ -1110,7 +1084,6 @@ fn get_and_check_fs_options(sb: &SuperBlock, cfg: &Config) -> anyhow::Result<FsO
     Ok(fs_opts)
 }
 
-
 /// Ext4-style crc32c algorithm.
 /// Source: https://github.com/FauxFaux/ext4-rs/blob/211fa05cd7b1498060b4b68ffed368d8d3c3b788/src/parse.rs
 fn ext4_style_crc32c_le(seed: u32, buf: &[u8]) -> u32
@@ -1118,13 +1091,11 @@ fn ext4_style_crc32c_le(seed: u32, buf: &[u8]) -> u32
     crc::crc32::update(seed ^ (!0), &crc::crc32::CASTAGNOLI_TABLE, buf) ^ (!0u32)
 }
 
-
 /// Calculates the offset of a specified block group.
 fn start_of_bg(bg_num: u64, fs: &Fs) -> u64
 {
     fs.sb.s_first_data_block as u64 * bs!(fs.sb.s_log_block_size) + bg_num * fs.bg_size
 }
-
 
 /// Returns the offset of the 1st group desriptor table.
 fn start_of_first_gdt(sb: &SuperBlock) -> u64
@@ -1138,9 +1109,7 @@ fn start_of_first_gdt(sb: &SuperBlock) -> u64
     }
 }
 
-
 // Debug implementations.
-
 
 impl std::fmt::Debug for State {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
@@ -1166,7 +1135,6 @@ impl std::fmt::Debug for State {
             .finish()
     }
 }
-
 
 impl std::fmt::Debug for CompatFeatures {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
@@ -1219,7 +1187,6 @@ impl std::fmt::Debug for CompatFeatures {
             .finish()
     }
 }
-
 
 impl std::fmt::Debug for IncompatFeatures {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
@@ -1281,7 +1248,6 @@ impl std::fmt::Debug for IncompatFeatures {
             .finish()
     }
 }
-
 
 impl std::fmt::Debug for RoCompatFeatures {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
@@ -1347,7 +1313,6 @@ impl std::fmt::Debug for RoCompatFeatures {
     }
 }
 
-
 impl std::fmt::Debug for DefMountOpts {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
     {
@@ -1399,7 +1364,6 @@ impl std::fmt::Debug for DefMountOpts {
             .finish()
     }
 }
-
 
 impl std::fmt::Debug for Flags {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result

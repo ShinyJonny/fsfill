@@ -3,9 +3,7 @@ use std::slice::SliceIndex;
 
 use serde::Serialize;
 
-
 const MIN_CAPACITY: usize = 8200;
-
 
 /// Data structure for tracking free/used space on a drive.
 #[derive(Clone, Debug, Serialize)]
@@ -153,7 +151,6 @@ impl UsageMap {
     }
 }
 
-
 /// Data structure representing a run of bytes on a drive.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Segment {
@@ -169,7 +166,6 @@ impl Segment {
     }
 }
 
-
 /// Allocation status of a Segment.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum AllocStatus {
@@ -177,9 +173,7 @@ pub enum AllocStatus {
     Used,
 }
 
-
 // Trait implementations.
-
 
 // Iterating.
 
@@ -237,9 +231,7 @@ where
     }
 }
 
-
 // Tests.
-
 
 #[cfg(test)]
 mod tests {
@@ -574,7 +566,6 @@ mod tests {
         }
     }
 
-
     mod segment {
         use super::*;
 
@@ -618,7 +609,6 @@ mod tests {
             assert_eq!(e1, Segment { start: 0, end: 0, status: AllocStatus::Free});
         }
     }
-
 
     mod alloc_status {
         use super::*;

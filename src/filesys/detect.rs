@@ -4,7 +4,6 @@ use crate::Context;
 use super::FsType;
 use super::e2fs;
 
-
 /// Attempts to detect the file system.
 pub fn detect_fs(context: &mut Context) -> anyhow::Result<Option<FsType>>
 {
@@ -14,7 +13,6 @@ pub fn detect_fs(context: &mut Context) -> anyhow::Result<Option<FsType>>
 
     Ok(None)
 }
-
 
 /// Attempts to detect the ext2/3/4 file system.
 fn detect_e2fs(context: &mut Context) -> anyhow::Result<bool>

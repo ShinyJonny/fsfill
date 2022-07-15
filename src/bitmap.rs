@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use std::io::Read;
 
-
 /// Lightweight bitmap abstraction.
 pub struct Bitmap(Vec<u8>);
 
@@ -45,7 +44,6 @@ impl Bitmap {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::Bitmap;
@@ -84,9 +82,7 @@ mod tests {
     }
 }
 
-
 // Debug and Display implementations
-
 
 impl std::fmt::Display for Bitmap {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error>
@@ -97,7 +93,6 @@ impl std::fmt::Display for Bitmap {
     }
 
 }
-
 
 impl std::fmt::Debug for Bitmap {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error>

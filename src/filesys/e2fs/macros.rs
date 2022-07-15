@@ -7,7 +7,6 @@ macro_rules! bs {
     };
 }
 
-
 /// The size of a group descriptor for buffer allocation.
 /// The larger one is picked to avoid de/serialisation problems.
 #[macro_export]
@@ -20,7 +19,6 @@ macro_rules! alloc_desc_size {
         }
     };
 }
-
 
 /// The size of an inode for buffer allocation.
 /// The larger one is picked to avoid de/serialisation problems.

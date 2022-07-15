@@ -10,9 +10,7 @@ use super::Fs;
 use crate::bs;
 use crate::hilo;
 
-
 pub const EXTENT_SIZE: usize = 12;
-
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -24,9 +22,7 @@ struct ExtentHeader {
     pub eh_generation: u32, // generation of the tree
 }
 
-
 pub const EXTENT_HEADER_SIZE: usize = 12;
-
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,7 +32,6 @@ pub struct Extent {
     pub ee_start_hi: u16, // high 16 bits of physical block
     pub ee_start_lo: u32, // low 32 bits of physical block
 }
-
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -48,9 +43,7 @@ struct ExtentIdx {
     pub ei_unused: u16,
 }
 
-
 pub const EXTENT_IDX_SIZE: usize = 12;
-
 
 // Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4_extents.h
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,9 +51,7 @@ struct ExtentTail {
     pub et_checksum: u32, // crc32c(uuid+inum+extent_block)
 }
 
-
 pub const EXTENT_TAIL_SIZE: usize = 4;
-
 
 /// E2fs extent tree.
 #[derive(Clone, Debug)]
@@ -90,7 +81,6 @@ impl ExtentTree {
         })
     }
 }
-
 
 /// Extent tree node.
 #[derive(Clone, Debug)]
@@ -185,14 +175,12 @@ impl Node {
     }
 }
 
-
 /// Entries of extent nodes.
 #[derive(Clone, Debug)]
 enum Entries {
     Extents(Vec<Extent>),
     Indexes(Vec<ExtentIdx>),
 }
-
 
 /// Scans the space occupied by the extent tree.
 pub fn scan_extent_tree(
@@ -235,7 +223,6 @@ pub fn scan_extent_tree(
 
     Ok(())
 }
-
 
 /// Scans the space occupied by an extent tree node.
 fn scan_extent_block(
@@ -289,9 +276,7 @@ fn scan_extent_block(
     Ok(())
 }
 
-
 // Implement iterating the tree.
-
 
 pub struct ExtentTreeIterator<'t> {
     tree: &'t ExtentTree,
@@ -387,7 +372,6 @@ impl<'t> Iterator for ExtentTreeIterator<'t> {
     }
 }
 
-
 /// Result of a search in one path down the tree.
 enum SearchResult<T> {
     /// Value has been found.
@@ -398,8 +382,6 @@ enum SearchResult<T> {
     End,
 }
 
-
 // Tests
-
 
 // TODO: unit test ExtentTree

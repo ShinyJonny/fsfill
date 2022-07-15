@@ -5,7 +5,6 @@ mod detect;
 pub mod e2fs;
 pub use detect::detect_fs;
 
-
 /// Supported file system types.
 #[derive(Copy, Clone, Debug, ArgEnum)]
 pub enum FsType {

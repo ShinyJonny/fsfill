@@ -3,7 +3,6 @@ use std::fs::File;
 
 use crate::Config;
 
-
 /// A simple logger.
 #[derive(Debug)]
 pub struct Logger {

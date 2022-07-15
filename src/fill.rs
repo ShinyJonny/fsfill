@@ -15,7 +15,6 @@ pub enum FillMode {
     Hc128,
 }
 
-
 /// Zero generator.
 /// The generator does nothing. It relies on the assumption that the buffer is already
 /// zero-initialised.
@@ -31,7 +30,6 @@ impl RngCore for ZeroGen {
     fn fill_bytes(&mut self, _dest: &mut [u8]) {}
     fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand::Error> { Ok(()) }
 }
-
 
 /// Fills all the free space on the drive.
 pub fn fill_free_space(map: &UsageMap, ctx: &mut Context, cfg: &Config) -> anyhow::Result<()>
@@ -54,7 +52,6 @@ pub fn fill_free_space(map: &UsageMap, ctx: &mut Context, cfg: &Config) -> anyho
         ),
     }
 }
-
 
 /// Fills all the free space on the disk, using a supplied byte generator.
 fn fill_free_space_with<R, W>(gen: &mut R, map: &UsageMap, drive: &mut W) -> anyhow::Result<()>
@@ -99,9 +96,7 @@ where
     Ok(())
 }
 
-
 // Debug and Display implementations.
-
 
 impl std::fmt::Display for FillMode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
@@ -114,9 +109,7 @@ impl std::fmt::Display for FillMode {
     }
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {

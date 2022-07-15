@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 use serde::ser::{Serialize, Serializer, SerializeTuple};
 use serde::de::{Deserialize, Deserializer, SeqAccess, Visitor, Error};
 
-
 /// Copiable, serializable, arbitrary-size array (slice).
 #[derive(Clone, Copy, Debug, Eq)]
 pub struct Array<T, const C: usize>(pub [T; C]);
@@ -61,7 +60,6 @@ where
         deserializer.deserialize_tuple(C, ArrayVisitor { marker: PhantomData })
     }
 }
-
 
 // Source: https://docs.serde.rs/src/serde/de/impls.rs.html
 #[derive(Debug)]

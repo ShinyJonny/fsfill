@@ -15,7 +15,6 @@ use filesys::FsType;
 use logger::Logger;
 use fill::FillMode;
 
-
 /// Command line argument configuration.
 #[derive(Debug, Parser)]
 #[clap(version)]
@@ -64,7 +63,6 @@ struct Args {
     #[clap(short, long, arg_enum, value_name = "MODE")]
     fill_mode: Option<FillMode>
 }
-
 
 fn main()
 {
@@ -189,14 +187,12 @@ fn main()
         context.logger.log(0, "=== filling the free space");
         context.logger.logln(0, &format!("; fill mode: {}", cfg.fill_mode));
 
-
         if let Err(e) = fill::fill_free_space(&map.unwrap(), &mut context, &cfg) {
             eprintln!("{}: {}", cfg.cmd_name, &e);
             std::process::exit(1);
         }
     }
 }
-
 
 /// Contains configuration options.
 #[derive(Clone, Debug)]
@@ -230,7 +226,6 @@ impl Default for Config {
         }
     }
 }
-
 
 /// Contains shared mutable state.
 #[derive(Debug)]
