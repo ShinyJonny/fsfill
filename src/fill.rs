@@ -83,9 +83,9 @@ where
 
                 let buf_remaining = buf.len() - head;
                 let to_write = segment.size() - written;
-                let write_size = if to_write < buf_remaining { to_write } else { buf_remaining };
+                let write_size = std::cmp::min(to_write, buf_remaining);
 
-                drive.write(&buf[head..head + write_size])?;
+                drive.write_all(&buf[head..head + write_size])?;
 
                 written += write_size;
                 head += write_size;
