@@ -11,21 +11,21 @@ pub struct UsageMap(pub Vec<Segment>);
 
 impl UsageMap {
     /// Creates a new UsageMap with the specified size.
-    pub fn new(len: u64) -> Self
+    pub fn new(size: u64) -> Self
     {
-        assert!(len > 0);
+        assert!(size > 0);
 
         // TODO: implement better capacity prediction.
         let capacity = usize::max(
             MIN_CAPACITY,
-            len as usize / 30000
+            size as usize / 30000
         );
 
         let mut vec = Vec::with_capacity(capacity);
         vec.push(
             Segment {
                 start: 0,
-                end: len,
+                end: size,
                 status: AllocStatus::Free,
             }
         );
@@ -45,25 +45,21 @@ impl UsageMap {
         self.0.last().unwrap().end
     }
 
-    /// Updates a portion of the map.
-    /// The method tolerates size reaching beyond the end of the map, and cuts it off. Updating the
+    /// Updates the map.
+    /// The method tolerates size reaching beyond the end of the map and cuts it off. Updating the
     /// map with the start reaching beyond the end of the map will panic.
     pub fn update(&mut self, start: u64, size: u64, status: AllocStatus)
     {
         // Tolerate reaching beyond the end of the map.
         let map_size = self.size();
-        let end = if start + size > map_size {
-            map_size
-        } else {
-            start + size
-        };
+        let end = std::cmp::min(start + size, map_size);
 
         assert!(start <= map_size);
 
         self.add_segment(Segment { start, end, status });
     }
 
-    /// Update a portion of the map with a raw Segment.
+    /// Update the map with a raw Segment.
     pub fn add_segment(&mut self, new: Segment)
     {
         let vector = &self.0;
@@ -72,39 +68,50 @@ impl UsageMap {
         assert!(new.start < new.end);
         assert!(new.end <= vector.iter().last().unwrap().end);
 
-        // Get the indices of the nodes within which the new segment's start and end are.
+        // Get the indices of the segments within which the new segment's start and end are.
 
         let start_i = vector.iter().position(|e| {
             new.start >= e.start && new.start < e.end
         }).unwrap();
-        let mut end_i = vector.iter().position(|e| {
+        let end_i = vector.iter().position(|e| {
             new.end > e.start && new.end <= e.end
         }).unwrap();
 
         let vector = &mut self.0;
 
-        // Delete all the segments in-between the start and end segments.
-        for _ in (start_i + 1)..end_i {
-            vector.remove(start_i + 1);
-        }
 
         // If the start and the end are in one segment, duplicate the segment for consistency.
         if start_i == end_i {
             vector.insert(start_i + 1, vector[start_i]);
+        // Else, delete all the segments in-between the start and end segments.
+        } else {
+            for _ in (start_i + 1)..end_i {
+                vector.remove(start_i + 1);
+            }
         }
 
-        end_i = start_i + 1;
+        let end_i = start_i + 1;
+
+        // Business logic XD.
 
         if vector[start_i].status == vector[end_i].status {
+            // Either join the segments or 'carve in' a new on by inserting a segment in between.
+
             if vector[start_i].status == new.status {
+                // Just join the start and end.
+
                 vector[start_i].end = vector[end_i].end;
                 vector.remove(end_i);
             } else {
+                // Insert a new segment between the two.
+
                 vector[start_i].end = new.start;
                 vector[end_i].start = new.end;
                 vector.insert(start_i + 1, new);
             }
         } else {
+            // Simply shrink and grow the appropriate segments.
+
             if vector[start_i].status == new.status {
                 vector[start_i].end = new.end;
                 vector[end_i].start = new.end;
@@ -116,6 +123,7 @@ impl UsageMap {
 
         // Remove remaining zero-sized segments and merge neighbours of the same status.
 
+        // FIXME: major bottlenecks.
         self.clean_zero_sized();
         self.merge_neighbours();
     }
@@ -136,11 +144,7 @@ impl UsageMap {
         let vector = &mut self.0;
         let mut head = 0;
 
-        loop {
-            if head + 1 >= vector.len() {
-                break;
-            }
-
+        while head + 1 < vector.len() {
             if vector[head].status == vector[head + 1].status {
                 vector[head].end = vector[head + 1].end;
                 vector.remove(head + 1);
@@ -168,14 +172,13 @@ impl Segment {
 
 /// Allocation status of a Segment.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AllocStatus {
     Free,
     Used,
 }
 
-// Trait implementations.
-
-// Iterating.
+// Iterators.
 
 impl<'a> IntoIterator for UsageMap {
     type Item = Segment;
@@ -207,7 +210,7 @@ impl<'a> IntoIterator for &'a mut UsageMap {
     }
 }
 
-// Indexing
+// Indexing.
 
 impl<I> Index<I> for UsageMap
 where
@@ -241,11 +244,11 @@ mod tests {
         use super::*;
 
         // NOTE: tests were not done for:
-        //  * UsageMap for IntoIterator.
-        //  * &UsageMap for IntoIterator.
-        //  * &mut UsageMap for IntoIterator.
-        //  * UsageMap for Index.
-        //  * UsageMap for IndexMut.
+        //  * UsageMap as IntoIterator.
+        //  * &UsageMap as IntoIterator.
+        //  * &mut UsageMap as IntoIterator.
+        //  * UsageMap as Index.
+        //  * UsageMap as IndexMut.
         //
         //  * UsageMap::size().
 

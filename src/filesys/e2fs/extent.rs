@@ -1,6 +1,7 @@
 use std::io::{Read, Seek, SeekFrom};
 use serde::{Deserialize, Serialize};
 use bincode::{DefaultOptions, Options};
+use anyhow::bail;
 
 use crate::usage_map::{UsageMap, AllocStatus};
 use crate::Context;
@@ -37,8 +38,8 @@ pub struct Extent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ExtentIdx {
     pub ei_block: u32,   // index covers logical blocks from 'block'
-    pub ei_leaf_lo: u32, // pointer to the physical block of the next
-                         // level. leaf or next index could be there
+    pub ei_leaf_lo: u32, // pointer to the physical block of the next level. leaf or next index
+                         // could be there
     pub ei_leaf_hi: u16, // high 16 bits of physical block
     pub ei_unused: u16,
 }
@@ -102,8 +103,10 @@ impl Node {
 
         let header: ExtentHeader = bincode_opt.deserialize(&raw_node)?;
 
-        // FIXME: this sanity check should probably be removed or handled better.
-        assert_eq!(header.eh_magic, 0xf30a);
+        // TODO: wrap this error with the node id outside of this procedure.
+        if header.eh_magic != 0xf30a {
+            bail!("extent tree node's header does not match the magic value");
+        }
 
         // Deserialise the extents or extent indexes.
 
@@ -148,7 +151,6 @@ impl Node {
             return Ok(())
         };
 
-        // Prepare buffers.
         self.subnodes = Some(Vec::with_capacity(self.header.eh_entries as usize));
         let mut block_buf = vec![u8::default(); bs!(fs.sb.s_log_block_size) as usize];
 
@@ -163,6 +165,9 @@ impl Node {
             ctx.drive.read_exact(&mut block_buf)?;
 
             let mut new_subnode = Self::from_raw(&mut block_buf)?;
+
+            // TODO: test on drives with deeply nested extent trees (not tested yet, only on
+            // simple extent trees).
 
             if new_subnode.header.eh_depth > 0 {
                 Self::populate_subnodes(&mut new_subnode, fs, ctx)?;
@@ -182,6 +187,8 @@ enum Entries {
     Indexes(Vec<ExtentIdx>),
 }
 
+// TODO: implement extent tree scanning utilising the ExtentTree structure. Currently, this
+// procedure implements extent tree parsing on its own.
 /// Scans the space occupied by the extent tree.
 pub fn scan_extent_tree(
     map: &mut UsageMap,
@@ -276,8 +283,7 @@ fn scan_extent_block(
     Ok(())
 }
 
-// Implement iterating the tree.
-
+/// Iterator for ExtentTree.
 pub struct ExtentTreeIterator<'t> {
     tree: &'t ExtentTree,
     indices: Vec<usize>,
@@ -384,4 +390,4 @@ enum SearchResult<T> {
 
 // Tests
 
-// TODO: unit test ExtentTree
+// TODO: test ExtentTree.
