@@ -22,71 +22,71 @@ use super::{
     },
 };
 
-// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
+// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 
 pub const GOOD_OLD_INODE_SIZE: u16 = 128;
 pub const N_BLOCKS: usize = 15;
 
 /// Ext4 inode.
-/// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
+/// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Inode {
-    pub i_mode: u16,              // File mode
-    pub i_uid: u16,               // Low 16 bits of Owner Uid
-    pub i_size_lo: u32,           // Size in bytes
-    pub i_atime: u32,             // Access time
-    pub i_ctime: u32,             // Inode Change time
-    pub i_mtime: u32,             // Modification time
-    pub i_dtime: u32,             // Deletion Time
-    pub i_gid: u16,               // Low 16 bits of Group Id
-    pub i_links_count: u16,       // Links count
-    pub i_blocks_lo: u32,         // Blocks count
-    pub i_flags: u32,             // File flags
-    pub osd1: u32,                // OS dependent 1
-    pub i_block: [u32; N_BLOCKS], // Pointers to blocks
-    pub i_generation: u32,        // File version (for NFS)
-    pub i_file_acl_lo: u32,       // File ACL
+    pub i_mode: u16,
+    pub i_uid: u16,
+    pub i_size_lo: u32,
+    pub i_atime: u32,
+    pub i_ctime: u32,
+    pub i_mtime: u32,
+    pub i_dtime: u32,
+    pub i_gid: u16,
+    pub i_links_count: u16,
+    pub i_blocks_lo: u32,
+    pub i_flags: u32,
+    pub osd1: u32,
+    pub i_block: [u32; N_BLOCKS],
+    pub i_generation: u32,
+    pub i_file_acl_lo: u32,
     pub i_size_high: u32,
-    pub i_obso_faddr: u32,        // Obsoleted fragment address
-    pub osd2: [u8; 12],           // OS dependent 2
+    pub i_obso_faddr: u32,
+    pub osd2: [u8; 12],
     pub i_extra_isize: u16,
-    pub i_checksum_hi: u16,       // crc32c(uuid+inum+inode) BE
-    pub i_ctime_extra: u32,       // extra Change time      (nsec << 2 | epoch)
-    pub i_mtime_extra: u32,       // extra Modification time(nsec << 2 | epoch)
-    pub i_atime_extra: u32,       // extra Access time      (nsec << 2 | epoch)
-    pub i_crtime: u32,            // File Creation time
-    pub i_crtime_extra: u32,      // extra FileCreationtime (nsec << 2 | epoch)
-    pub i_version_hi: u32,        // high 32 bits for 64-bit version
-    pub i_projid: u32,            // Project ID
+    pub i_checksum_hi: u16,
+    pub i_ctime_extra: u32,
+    pub i_mtime_extra: u32,
+    pub i_atime_extra: u32,
+    pub i_crtime: u32,
+    pub i_crtime_extra: u32,
+    pub i_version_hi: u32,
+    pub i_projid: u32,
 }
 
 pub const INODE_STRUCT_SIZE: usize = 160;
 
-// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
+// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Osd2Linux {
-    pub l_i_blocks_high: u16, // were l_i_reserved1
+    pub l_i_blocks_high: u16,
     pub l_i_file_acl_high: u16,
-    pub l_i_uid_high: u16,    // these 2 fields
-    pub l_i_gid_high: u16,    // were reserved2[0]
-    pub l_i_checksum_lo: u16, // crc32c(uuid+inum+inode) LE
+    pub l_i_uid_high: u16,
+    pub l_i_gid_high: u16,
+    pub l_i_checksum_lo: u16,
     pub l_i_reserved: u16,
 }
 
-// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
+// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Osd2Hurd {
-    pub h_i_reserved1: u16, // Obsoleted fragment number/size which are removed in ext4
+    pub h_i_reserved1: u16,
     pub h_i_mode_high: u16,
     pub h_i_uid_high: u16,
     pub h_i_gid_high: u16,
     pub h_i_author: u32,
 }
 
-// Source: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
+// Reference: https://elixir.bootlin.com/linux/latest/source/fs/ext4/ext4.h#L811
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Osd2Masix {
-    pub h_i_reserved1: u16,      // Obsoleted fragment number/size which are removed in ext4
+    pub h_i_reserved1: u16,
     pub m_i_file_acl_high: u16,
     pub m_i_reserved2: [u32; 2],
 }

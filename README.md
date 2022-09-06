@@ -1,6 +1,6 @@
 # Fsfill
 
-Zero-fill unused space in file systems
+(WIP) Zero-fill unused space in file systems
 
 ## Description
 
@@ -69,15 +69,3 @@ If you have a correctly setup rust tool chain, the built binary should be in you
 
 - E2fs versions other than Ext4 (Ext2 and Ext3) are not very well supported yet and often get corrupted (WIP).
 - Sometimes, a few small 'holes', i.e. unused and unfilled spaces, can still remain on the drive.
-
-## Third Party Libraries
-
-- [clap](https://crates.io/crates/clap)
-- [serde](https://crates.io/crates/serde)
-- [bincode](https://crates.io/crates/bincode)
-- [serde_json](https://crates.io/crates/serde_json)
-- [anyhow](https://crates.io/crates/anyhow)
-- [crc](https://crates.io/crates/crc)
-- [rand](https://crates.io/crates/rand)
-- [rand_chacha](https://crates.io/crates/rand_chacha)
-- [rand_hc](https://crates.io/crates/rand_hc)

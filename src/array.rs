@@ -57,7 +57,7 @@ where
     }
 }
 
-// Source: https://docs.serde.rs/src/serde/de/impls.rs.html
+// Reference: https://docs.serde.rs/src/serde/de/impls.rs.html
 #[derive(Debug)]
 struct ArrayVisitor<A> {
     marker: PhantomData<A>,
