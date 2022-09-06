@@ -217,7 +217,7 @@ impl Default for Config {
     fn default() -> Self
     {
         Self {
-            cmd_name: String::from("zbfill"),
+            cmd_name: String::from("fsfill"),
             fs_type: FsType::Ext4,
             drive_path: PathBuf::default(),
             log_file_path: None,

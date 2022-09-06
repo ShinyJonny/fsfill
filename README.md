@@ -1,4 +1,4 @@
-# Zbfill
+# Fsfill
 
 Zero-fill unused space in file systems
 
@@ -16,32 +16,32 @@ Currently supported file systems:
 
 To scan and fill a drive, run:
 ```
-zbfill <DRIVE_PATH>
+fsfill <DRIVE_PATH>
 ```
 
 To specify the fill mode, use the `-f` or `--fill-mode` flags:
 ```
-zbfill --fill-mode chacha20 <DRIVE_PATH>
+fsfill --fill-mode chacha20 <DRIVE_PATH>
 ```
 
 To get the usage of the drive in JSON format, use either the `-r` or `--report-only` flags:
 ```
-zbfill --report-only <DRIVE_PATH>
+fsfill --report-only <DRIVE_PATH>
 ```
 
 For more verbose log output use either the `-v` or `--verbose` flags (can be used multiple times for increased depth of verbosity):
 ```
-zbfill -vv <DRIVE_PATH>
+fsfill -vv <DRIVE_PATH>
 ```
 
 To store the informational output into a file, supply a log file with either the `-l` or `--log-file` flags:
 ```
-zbfill -l <LOG_FILE_PATH> <DRIVE_PATH>
+fsfill -l <LOG_FILE_PATH> <DRIVE_PATH>
 ```
 
 For more information on the usage and supported flags, use either the `-h` or `--help` flags:
 ```
-zbfill --help
+fsfill --help
 ```
 
 ## Building
@@ -52,7 +52,7 @@ Requirements:
 Steps:
 1. Run: `cargo build --release`
 
-The binary will be located at `target/release/zbfill`
+The binary will be located at `target/release/fsfill`
 
 ## Installation
 
