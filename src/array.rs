@@ -2,11 +2,10 @@ use std::marker::PhantomData;
 use serde::ser::{Serialize, Serializer, SerializeTuple};
 use serde::de::{Deserialize, Deserializer, SeqAccess, Visitor, Error};
 
-/// Copiable, serializable, arbitrary-size array (slice).
+/// Copiable, serializable, arbitrary-size slice.
 #[derive(Clone, Copy, Debug, Eq)]
 pub struct Array<T, const C: usize>(pub [T; C]);
 
-// Implement default initialisation.
 impl<T, const C: usize> Default for Array<T, C>
 where
     T: Default + Copy
@@ -17,7 +16,6 @@ where
     }
 }
 
-// Implement `=` operator overloading.
 impl<T, const C: usize> PartialEq for Array<T, C>
 where
     T: PartialEq
@@ -28,7 +26,6 @@ where
     }
 }
 
-// Implement serialisation with serde.
 impl<T, const C: usize> Serialize for Array<T, C>
 where
     T: Serialize
@@ -48,7 +45,6 @@ where
     }
 }
 
-// Implement deserialisation with serde.
 impl<'de, T, const C: usize> Deserialize<'de> for Array<T, C>
 where
     T: Deserialize<'de> + Default + Copy

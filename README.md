@@ -8,9 +8,9 @@ Scans the file system for unused space and fills it with bytes.
 Can be used for file systems within encryption layers like [dm-crypt](https://wiki.archlinux.org/title/Dm-crypt) to encrypt all the blocks that were not touched by the file system and restore plausible deniability.
 
 Currently supported file systems:
-- Ext2
-- Ext3
 - Ext4
+- Ext2 (experimental)
+- Ext3 (experimental)
 
 ## Usage
 
@@ -64,6 +64,11 @@ Steps:
 2. Run: `cargo install --path .`
 
 If you have a correctly setup rust tool chain, the built binary should be in your PATH.
+
+## Known Bugs
+
+- E2fs versions other than Ext4 (Ext2 and Ext3) are not very well supported yet and often get corrupted (WIP).
+- Sometimes, a few small 'holes', i.e. unused and unfilled spaces, can still remain on the drive.
 
 ## Third Party Libraries
 

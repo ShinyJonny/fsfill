@@ -12,7 +12,6 @@ pub struct Logger {
 }
 
 impl Logger {
-    /// Create a new logger.
     pub fn new(log_file: Option<File>, cfg: &Config) -> Self
     {
         Self {
